@@ -113,6 +113,13 @@ static void _sde_cesta_log_status(struct sde_cesta *cesta)
 static int  _sde_cesta_check_mode2_entry_status(u32 cesta_index)
 {
 	struct sde_cesta *cesta;
+	/*
+	 * Widening this to 40 (~2ms) was tried and reverted: the status still read
+	 * 0x0 after every one of the 40 trials, so the window was never the
+	 * problem. Note this polls RSCC_SEQ_PWR_CTRL_STATUS *after* the caller has
+	 * already run msm_dss_enable_clk(..., false), which is a plausible reason
+	 * the whole register reads back as zero.
+	 */
 	int pwr_ctrl_status, trial = 0, max_trials = 10;
 
 	cesta = cesta_list[cesta_index];
@@ -874,18 +881,22 @@ int sde_cesta_resource_disable(u32 cesta_index)
 	msm_dss_enable_clk(mp->clk_config, mp->num_clk, false);
 
 	ret = _sde_cesta_check_mode2_entry_status(cesta_index);
-	if (ret) {
+	if (ret)
 		SDE_ERROR_CESTA("mode2 entry failed ret:%d\n", ret);
-		return ret;
-	}
 
 	/*
 	 * Add delay before disabling MMCX to allow HW to complete any pending operations.
 	 * This avoids potential NOC issue.
+	 *
+	 * This must run even when the mode2 check above failed. Both callers in
+	 * sde_power_handle.c ignore our return value and go straight on to
+	 * msm_dss_enable_vreg(..., 0), so returning early here dropped the settle
+	 * exactly in the case it exists to protect against - the HW is already
+	 * known to be in a bad state.
 	 */
 	usleep_range(500, 510);
 
-	return 0;
+	return ret;
 }
 
 int sde_cesta_resource_enable(u32 cesta_index)
