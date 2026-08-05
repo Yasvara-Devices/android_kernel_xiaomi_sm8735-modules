@@ -467,7 +467,7 @@ static int sde_hw_lm_collect_misr(struct sde_hw_mixer *ctx, bool nonblock,
 	if (!nonblock) {
 		if (ctrl & MISR_CTRL_ENABLE) {
 			rc = read_poll_timeout(sde_reg_read, ctrl, (ctrl & MISR_CTRL_STATUS) > 0,
-					500, false, 84000, c, LM_MISR_CTRL);
+					500, 84000, false, c, LM_MISR_CTRL);
 			if (rc)
 				return rc;
 		} else {
