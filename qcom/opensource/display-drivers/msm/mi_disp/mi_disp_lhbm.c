@@ -412,6 +412,7 @@ static int mi_disp_lhbm_fod_thread_fn(void *arg)
 	struct lhbm_setting *entry = NULL, *temp = NULL;
 	struct lhbm_setting lhbm_setting_event;
 	unsigned long flag = 0;
+	int prev_brightness = 0;
 
 	while (!kthread_should_stop()) {
 		rc = wait_event_interruptible(
@@ -458,8 +459,8 @@ static int mi_disp_lhbm_fod_thread_fn(void *arg)
 			list_del(&entry->link);
 			kfree(entry);
 		}
-		if (atomic_read(&lhbm_fod->target_brightness) !=
-		    lhbm_setting_event.lhbm_value) {
+		prev_brightness = atomic_read(&lhbm_fod->target_brightness);
+		if (prev_brightness != lhbm_setting_event.lhbm_value) {
 			atomic_set(&lhbm_fod->target_brightness,
 				   lhbm_setting_event.lhbm_value);
 
@@ -479,6 +480,16 @@ static int mi_disp_lhbm_fod_thread_fn(void *arg)
 				DISP_ERROR(
 					"lhbm_fod failed to set_disp_param, rc = %d\n",
 					rc);
+				/* The panel never got the command, so the
+				 * tracked state must stay where it was. Leaving
+				 * it on the new value makes the dedupe below
+				 * swallow every retry, which strands local hbm
+				 * on the panel until the next display off.
+				 * Only restore if nobody moved it meanwhile.
+				 */
+				atomic_cmpxchg(&lhbm_fod->target_brightness,
+					       lhbm_setting_event.lhbm_value,
+					       prev_brightness);
 			} else if (lhbm_setting_event.lhbm_value !=
 					   LHBM_TARGET_BRIGHTNESS_OFF_FINGER_UP &&
 				   lhbm_setting_event.lhbm_value !=
