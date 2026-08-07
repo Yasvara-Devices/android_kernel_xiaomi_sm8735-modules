@@ -836,7 +836,7 @@ static void xiaomi_touch_set_mode_value(common_data_t *common_data)
 		return;
 	}
 	if (mode != THP_BASE_STATUS && mode != Touch_Gesture_Type)
-		LOG_INFO("touch_id:%d, mode:%d,val:%d", touch_id, mode, val);
+		LOG_DEBUG("touch_id:%d, mode:%d,val:%d", touch_id, mode, val);
 
 	if (mode >= Touch_Mode_NUM) {
 		if (mode == Touch_Resolution) {

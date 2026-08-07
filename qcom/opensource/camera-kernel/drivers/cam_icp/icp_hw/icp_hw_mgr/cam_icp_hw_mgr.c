@@ -3396,7 +3396,7 @@ static void cam_icp_mgr_process_dbg_buf(struct cam_icp_hw_mgr *hw_mgr)
 				trace_cam_icp_fw_dbg(msg_data, timestamp/2,
 					hw_mgr->hw_mgr_name);
 				if (!hw_mgr->icp_dbg_lvl)
-					CAM_INFO(CAM_ICP, "[%s]: FW_DBG:%s",
+					CAM_DBG(CAM_ICP, "[%s]: FW_DBG:%s",
 						hw_mgr->hw_mgr_name, msg_data);
 			}
 
