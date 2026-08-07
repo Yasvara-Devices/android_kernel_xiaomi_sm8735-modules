@@ -657,6 +657,16 @@ static inline int cam_smmu_get_multiregion_client_dev_idx(
 	struct cam_context_bank_info *cb_info, int32_t multi_client_device_idx,
 	int32_t region_id, int32_t *region_idx)
 {
+	/*
+	 * Default to the first nested region. Without this, the non
+	 * multi-region path below returns success while leaving *region_idx
+	 * untouched, so callers that declare it uninitialised index
+	 * nested_regions[] with whatever was on the stack. That is benign
+	 * only while CONFIG_INIT_STACK_ALL_ZERO is on; with INIT_STACK_NONE
+	 * it traps in UBSAN as an out-of-bounds array index.
+	 */
+	*region_idx = 0;
+
 	if (cb_info->num_multi_regions && multi_client_device_idx) {
 		*region_idx = multi_client_device_idx;
 		return cam_smmu_validate_nested_region_idx(cb_info, region_idx, region_id);
@@ -2386,7 +2396,7 @@ int cam_smmu_reserve_buf_region(enum cam_smmu_region_id region,
 	bool *is_buf_allocated;
 	bool region_supported;
 	ssize_t size = 0;
-	int idx, rc = 0, multi_client_device_idx, prot, nested_reg_idx;
+	int idx, rc = 0, multi_client_device_idx, prot, nested_reg_idx = 0;
 
 	idx = GET_SMMU_TABLE_IDX(smmu_hdl);
 	multi_client_device_idx = GET_SMMU_MULTI_CLIENT_IDX(smmu_hdl);
@@ -2535,7 +2545,7 @@ EXPORT_SYMBOL(cam_smmu_reserve_buf_region);
 int cam_smmu_release_buf_region(enum cam_smmu_region_id region,
 	int32_t smmu_hdl)
 {
-	int idx, multi_client_device_idx, nested_reg_idx;
+	int idx, multi_client_device_idx, nested_reg_idx = 0;
 	size_t size = 0;
 	struct region_buf_info *buf_info = NULL;
 	struct cam_context_bank_info *cb_info;
