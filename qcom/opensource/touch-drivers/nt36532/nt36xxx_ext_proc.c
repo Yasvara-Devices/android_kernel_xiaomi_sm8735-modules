@@ -513,7 +513,9 @@ return:
 *******************************************************/
 static int32_t nvt_baseline_open(struct inode *inode, struct file *file)
 {
+	WRITE_ONCE(ts->mdata_reading, true);   /* P2-5.3 */
 	if (mutex_lock_interruptible(&ts->lock)) {
+		WRITE_ONCE(ts->mdata_reading, false);
 		return -ERESTARTSYS;
 	}
 
@@ -525,6 +527,7 @@ static int32_t nvt_baseline_open(struct inode *inode, struct file *file)
 
 	if (nvt_clear_fw_status()) {
 		mutex_unlock(&ts->lock);
+		WRITE_ONCE(ts->mdata_reading, false);
 		return -EAGAIN;
 	}
 
@@ -532,11 +535,13 @@ static int32_t nvt_baseline_open(struct inode *inode, struct file *file)
 
 	if (nvt_check_fw_status()) {
 		mutex_unlock(&ts->lock);
+		WRITE_ONCE(ts->mdata_reading, false);
 		return -EAGAIN;
 	}
 
 	if (nvt_get_fw_info()) {
 		mutex_unlock(&ts->lock);
+		WRITE_ONCE(ts->mdata_reading, false);
 		return -EAGAIN;
 	}
 
@@ -545,6 +550,7 @@ static int32_t nvt_baseline_open(struct inode *inode, struct file *file)
 	nvt_change_mode(NORMAL_MODE);
 
 	mutex_unlock(&ts->lock);
+	WRITE_ONCE(ts->mdata_reading, false);  /* P2-5.3 */
 
 	NVT_LOG("--\n");
 
@@ -577,7 +583,9 @@ return:
 *******************************************************/
 static int32_t nvt_raw_open(struct inode *inode, struct file *file)
 {
+	WRITE_ONCE(ts->mdata_reading, true);   /* P2-5.3 */
 	if (mutex_lock_interruptible(&ts->lock)) {
+		WRITE_ONCE(ts->mdata_reading, false);
 		return -ERESTARTSYS;
 	}
 
@@ -589,6 +597,7 @@ static int32_t nvt_raw_open(struct inode *inode, struct file *file)
 
 	if (nvt_clear_fw_status()) {
 		mutex_unlock(&ts->lock);
+		WRITE_ONCE(ts->mdata_reading, false);
 		return -EAGAIN;
 	}
 
@@ -596,11 +605,13 @@ static int32_t nvt_raw_open(struct inode *inode, struct file *file)
 
 	if (nvt_check_fw_status()) {
 		mutex_unlock(&ts->lock);
+		WRITE_ONCE(ts->mdata_reading, false);
 		return -EAGAIN;
 	}
 
 	if (nvt_get_fw_info()) {
 		mutex_unlock(&ts->lock);
+		WRITE_ONCE(ts->mdata_reading, false);
 		return -EAGAIN;
 	}
 
@@ -614,6 +625,7 @@ static int32_t nvt_raw_open(struct inode *inode, struct file *file)
 	nvt_change_mode(NORMAL_MODE);
 
 	mutex_unlock(&ts->lock);
+	WRITE_ONCE(ts->mdata_reading, false);  /* P2-5.3 */
 
 	NVT_LOG("--\n");
 
@@ -646,7 +658,9 @@ return:
 *******************************************************/
 static int32_t nvt_diff_open(struct inode *inode, struct file *file)
 {
+	WRITE_ONCE(ts->mdata_reading, true);   /* P2-5.3 */
 	if (mutex_lock_interruptible(&ts->lock)) {
+		WRITE_ONCE(ts->mdata_reading, false);
 		return -ERESTARTSYS;
 	}
 
@@ -658,6 +672,7 @@ static int32_t nvt_diff_open(struct inode *inode, struct file *file)
 
 	if (nvt_clear_fw_status()) {
 		mutex_unlock(&ts->lock);
+		WRITE_ONCE(ts->mdata_reading, false);
 		return -EAGAIN;
 	}
 
@@ -665,11 +680,13 @@ static int32_t nvt_diff_open(struct inode *inode, struct file *file)
 
 	if (nvt_check_fw_status()) {
 		mutex_unlock(&ts->lock);
+		WRITE_ONCE(ts->mdata_reading, false);
 		return -EAGAIN;
 	}
 
 	if (nvt_get_fw_info()) {
 		mutex_unlock(&ts->lock);
+		WRITE_ONCE(ts->mdata_reading, false);
 		return -EAGAIN;
 	}
 
@@ -683,6 +700,7 @@ static int32_t nvt_diff_open(struct inode *inode, struct file *file)
 	nvt_change_mode(NORMAL_MODE);
 
 	mutex_unlock(&ts->lock);
+	WRITE_ONCE(ts->mdata_reading, false);  /* P2-5.3 */
 
 	NVT_LOG("--\n");
 

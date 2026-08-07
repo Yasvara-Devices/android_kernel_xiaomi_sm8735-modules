@@ -18,6 +18,7 @@
 
 #include <linux/firmware.h>
 #include <linux/gpio.h>
+#include <linux/vmalloc.h>
 
 #include "nt36xxx.h"
 
@@ -87,8 +88,8 @@ static int32_t nvt_download_init(void)
 	//NVT_LOG("NVT_TRANSFER_LEN = 0x%06X\n", NVT_TRANSFER_LEN);
 
 	if (fwbuf == NULL) {
-		fwbuf = (uint8_t *)kzalloc((NVT_TRANSFER_LEN + 1 + DUMMY_BYTES),
-					   GFP_KERNEL);
+		fwbuf = (uint8_t *)kvzalloc((NVT_TRANSFER_LEN + 1 + DUMMY_BYTES),
+					    GFP_KERNEL);
 		if (fwbuf == NULL) {
 			NVT_ERR("kzalloc for fwbuf failed!\n");
 			return -ENOMEM;

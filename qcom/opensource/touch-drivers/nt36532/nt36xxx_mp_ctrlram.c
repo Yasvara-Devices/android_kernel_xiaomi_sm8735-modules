@@ -122,6 +122,26 @@ static struct proc_dir_entry *NVT_proc_selftest_entry = NULL;
 static int8_t nvt_mp_test_result_printed = 0;
 static uint8_t fw_ver = 0;
 static uint16_t nvt_pid = 0;
+static bool mp_criteria_loaded = false;
+
+static int32_t nvt_mp_sync_geometry(void)
+{
+	if (mp_criteria_loaded)
+		return 0;
+
+	if (ts->x_num == 0 || ts->y_num == 0 ||
+	    ts->x_num > X_Y_MAX || ts->y_num > X_Y_MAX) {
+		NVT_ERR("[DIS-TF-TOUCH] invalid FW geometry x=%u y=%u, abort MP\n",
+			ts->x_num, ts->y_num);
+		return -EINVAL;
+	}
+
+	NVT_LOG("CSV absent: geometry %ux%u -> %ux%u (from FW info)\n",
+		X_Channel, Y_Channel, ts->x_num, ts->y_num);
+	X_Channel = ts->x_num;
+	Y_Channel = ts->y_num;
+	return 0;
+}
 
 extern void nvt_change_mode(uint8_t mode);
 extern uint8_t nvt_get_fw_pipe(void);
@@ -2407,10 +2427,15 @@ static int32_t nvt_selftest_open(struct inode *inode, struct file *file)
 	fw_ver = ts->fw_ver;
 	nvt_pid = ts->nvt_pid;
 
+	mp_criteria_loaded = false;
 	if (nvt_load_mp_setting_criteria_from_csv() < 0) {
 		NVT_LOG("Fail load criteria from csv file, use default setting\n");
 		//---Print Test Criteria---
 		nvt_print_criteria();
+	}
+	if (nvt_mp_sync_geometry()) {
+		NVT_ERR("[DIS-TF-TOUCH] MP geometry sync failed!\n");
+		goto failed_out;
 	}
 
 	if (nvt_check_fw_reset_state(RESET_STATE_NORMAL_RUN)) {
@@ -2737,10 +2762,15 @@ int nvt_ic_self_test_short(void)
 		goto short_failed_out;
 	}
 
+	mp_criteria_loaded = false;
 	if (nvt_load_mp_setting_criteria_from_csv() < 0) {
 		NVT_LOG("Fail load criteria from csv file, use default setting\n");
 		//---Print Test Criteria---
 		nvt_print_criteria();
+	}
+	if (nvt_mp_sync_geometry()) {
+		NVT_ERR("[DIS-TF-TOUCH] MP geometry sync failed!\n");
+		goto short_failed_out;
 	}
 
 	if (nvt_check_fw_reset_state(RESET_STATE_NORMAL_RUN)) {
@@ -2829,10 +2859,15 @@ int nvt_ic_self_test_open(void)
 		goto open_failed_out;
 	}
 
+	mp_criteria_loaded = false;
 	if (nvt_load_mp_setting_criteria_from_csv() < 0) {
 		NVT_LOG("Fail load criteria from csv file, use default setting\n");
 		//---Print Test Criteria---
 		nvt_print_criteria();
+	}
+	if (nvt_mp_sync_geometry()) {
+		NVT_ERR("[DIS-TF-TOUCH] MP geometry sync failed!\n");
+		goto open_failed_out;
 	}
 
 	if (nvt_check_fw_reset_state(RESET_STATE_NORMAL_RUN)) {
@@ -3228,6 +3263,7 @@ int32_t nvt_load_mp_setting_criteria_from_csv(void)
 				    sizeof(struct mp_criteria_item)) {
 			NVT_LOG("Load MP criteria and golden samples finished.\n");
 			ts->limit_version = Limit_Version;
+			mp_criteria_loaded = true;
 			break;
 		}
 	}

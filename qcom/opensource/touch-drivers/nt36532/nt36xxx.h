@@ -188,6 +188,13 @@ extern const uint16_t gesture_key_array[];
 #define POINT_DATA_CHECKSUM 1
 #define POINT_DATA_CHECKSUM_LEN 65
 
+/* Frame CRC32 (FW contract v2): byte [20..23] of the frame packet carries
+ * CRC32 over packet[0..crc_len) with the crc32 field taken as zero.
+ * Keep 0 until matching FW is released; the 16-bit path stays active.
+ */
+#define NVT_FRAME_CRC32_EN 0
+#define NVT_FRAME_CRC32_OFFSET 20
+
 //---ESD Protect.---
 #define NVT_TOUCH_ESD_PROTECT 0
 #define NVT_TOUCH_ESD_CHECK_PERIOD 1500 /* ms */
@@ -356,6 +363,7 @@ struct nvt_ts_data {
 #endif /*TOUCH_THP_SUPPORT*/
 	bool enable_touch_raw;
 	bool xm_htc_polled;
+	uint8_t frame_crc32_en;   /* runtime gate, mirrors NVT_FRAME_CRC32_EN */
 	bool ts_probe_start;
 	bool ts_selftest_process;
 	bool ts_selftest_process_cmd;
@@ -363,6 +371,11 @@ struct nvt_ts_data {
 	//thp end 6.8
 	bool doze_test;
 	bool nvt_tool_in_use;
+	/* P1-1.2: IRQ thread tuning */
+	bool irq_thread_tuned;          /* per-thread, reset on re-request */
+	bool irq_affinity_valid;
+	struct cpumask irq_affinity;
+	bool mdata_reading;   /* P2-5.3: meta-data read in progress, IRQ drops frame */
 	uint32_t limit_version;
 };
 

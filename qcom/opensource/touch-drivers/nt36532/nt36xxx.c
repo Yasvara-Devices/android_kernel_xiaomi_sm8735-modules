@@ -27,6 +27,8 @@
 #include <uapi/linux/sched/types.h>
 #include <linux/sched.h>
 #include <linux/cpumask.h>
+#include <linux/vmalloc.h>
+#include <asm/unaligned.h>
 #include "nt36xxx.h"
 #if defined(CONFIG_DRM_MSM)
 #include <linux/msm_drm_notify.h>
@@ -134,20 +136,47 @@ enum edge_filter_type {
 };
 
 // type, pos, startx, starty, endx, endy, re, re
+/*
+ * P0-6.1: zones are expressed in panel coordinates (0..TOUCH_MAX_WIDTH-1,
+ * 0..TOUCH_MAX_HEIGHT-1). Previous table was copied from a 2032x3048
+ * project (k81/m80 legacy) and was geometrically invalid for 1280x2772:
+ *   scale_x = 1280/2032 = 0.62992, scale_y = 2772/3048 = 0.90945
+ * Edge strips keep ~2.2% of width (28/1280), corners keep the same
+ * relative area. re/re columns remain 0 (FW-side coefficients).
+ */
 static int edge_filter_params[128] = {
-	ZONE_TYPE_GAME_CORNER, 0, 0,	0,    0,    0,	  0, 0,
-	ZONE_TYPE_GAME_CORNER, 1, 0,	0,    0,    0,	  0, 0,
-	ZONE_TYPE_GAME_CORNER, 2, 0,	0,    0,    2031, 0, 0,
-	ZONE_TYPE_GAME_CORNER, 3, 2031, 0,    2031, 3047, 0, 0,
-	ZONE_TYPE_EDGE_ZONE,   0, 0,	0,    0,    0,	  0, 0,
-	ZONE_TYPE_EDGE_ZONE,   1, 0,	0,    0,    0,	  0, 0,
-	ZONE_TYPE_EDGE_ZONE,   2, 0,	0,    45,   3047, 0, 0,
-	ZONE_TYPE_EDGE_ZONE,   3, 1986, 0,    2031, 3047, 0, 0,
-	ZONE_TYPE_CORNER_ZONE, 0, 0,	0,    0,    0,	  0, 0,
-	ZONE_TYPE_CORNER_ZONE, 1, 0,	0,    0,    0,	  0, 0,
-	ZONE_TYPE_CORNER_ZONE, 2, 0,	2647, 180,  3047, 0, 0,
-	ZONE_TYPE_CORNER_ZONE, 3, 1851, 2647, 2031, 3047, 0, 0
+	ZONE_TYPE_GAME_CORNER, 0, 0,    0,    0,    0,    0, 0, /* unused */
+	ZONE_TYPE_GAME_CORNER, 1, 0,    0,    0,    0,    0, 0, /* unused */
+	ZONE_TYPE_GAME_CORNER, 2, 0,    0,    1279, 0,    0, 0,
+	ZONE_TYPE_GAME_CORNER, 3, 1279, 0,    1279, 2771, 0, 0,
+	ZONE_TYPE_EDGE_ZONE,   0, 0,    0,    0,    0,    0, 0, /* unused */
+	ZONE_TYPE_EDGE_ZONE,   1, 0,    0,    0,    0,    0, 0, /* unused */
+	ZONE_TYPE_EDGE_ZONE,   2, 0,    0,    28,   2771, 0, 0, /* left  */
+	ZONE_TYPE_EDGE_ZONE,   3, 1251, 0,    1279, 2771, 0, 0, /* right */
+	ZONE_TYPE_CORNER_ZONE, 0, 0,    0,    0,    0,    0, 0, /* unused */
+	ZONE_TYPE_CORNER_ZONE, 1, 0,    0,    0,    0,    0, 0, /* unused */
+	ZONE_TYPE_CORNER_ZONE, 2, 0,    2407, 113,  2771, 0, 0, /* BL */
+	ZONE_TYPE_CORNER_ZONE, 3, 1166, 2407, 1279, 2771, 0, 0  /* BR */
 };
+
+static bool nvt_edge_filter_params_valid(const int *p, int entries)
+{
+	int i;
+	for (i = 0; i < entries; i++) {
+		const int *z = p + i * 8;
+		/* z: type,pos,sx,sy,ex,ey,re,re */
+		if (z[2] > z[4] || z[3] > z[5]) {
+			NVT_ERR("zone %d inverted rect\n", i);
+			return false;
+		}
+		if (z[4] >= TOUCH_MAX_WIDTH || z[5] >= TOUCH_MAX_HEIGHT) {
+			NVT_ERR("zone %d out of panel (%d,%d)\n",
+				i, z[4], z[5]);
+			return false;
+		}
+	}
+	return true;
+}
 // add edge params end
 #if TOUCH_KEY_NUM > 0
 const uint16_t touch_key_array[TOUCH_KEY_NUM] = { KEY_BACK, KEY_HOME,
@@ -406,7 +435,9 @@ static inline int32_t spi_read_write(struct spi_device *client, uint8_t *buf,
 		.len = len,
 	};
 
-	memset(ts->xbuf, 0, len + DUMMY_BYTES);
+	/* P2-1.1: memset was redundant - payload memcpy covers [0,len);
+	 * read-path dummy bytes are don't-care. Saves O(n) per xfer.
+	 */
 	memcpy(ts->xbuf, buf, len);
 
 	switch (rw) {
@@ -1144,15 +1175,16 @@ return:
 int32_t nvt_check_spi_dma_tx_info(void)
 {
 	uint8_t buf[8] = { 0 };
-	int32_t i = 0;
-	const int32_t retry = 200;
+	ktime_t deadline;
 
 	if (ts->mmap->SPI_DMA_TX_INFO == 0) {
 		NVT_ERR("error, SPI_DMA_TX_INFO = 0\n");
 		return -1;
 	}
 
-	for (i = 0; i < retry; i++) {
+	/* P3-2.3: hard 200ms deadline instead of retry x usleep */
+	deadline = ktime_add_ms(ktime_get(), 200);
+	do {
 		//---set xdata index to SPI_DMA_TX_INFO---
 		nvt_set_page(ts->mmap->SPI_DMA_TX_INFO);
 
@@ -1162,17 +1194,13 @@ int32_t nvt_check_spi_dma_tx_info(void)
 		CTP_SPI_READ(ts->client, buf, 2);
 
 		if (buf[1] == 0x00)
-			break;
+			return 0;
 
-		usleep_range(1000, 1000);
-	}
+		usleep_range(1000, 2000);
+	} while (ktime_before(ktime_get(), deadline));
 
-	if (i >= retry) {
-		NVT_ERR("failed, i=%d, buf[1]=0x%02X\n", i, buf[1]);
-		return -1;
-	} else {
-		return 0;
-	}
+	NVT_ERR("timeout, buf[1]=0x%02X\n", buf[1]);
+	return -1;
 }
 
 /*******************************************************
@@ -1185,15 +1213,16 @@ return:
 int32_t nvt_check_tx_auto_copy(void)
 {
 	uint8_t buf[8] = { 0 };
-	int32_t i = 0;
-	const int32_t retry = 200;
+	ktime_t deadline;
 
 	if (ts->mmap->TX_AUTO_COPY_EN == 0) {
 		NVT_ERR("error, TX_AUTO_COPY_EN = 0\n");
 		return -1;
 	}
 
-	for (i = 0; i < retry; i++) {
+	/* P3-2.3: hard 200ms deadline instead of retry x usleep */
+	deadline = ktime_add_ms(ktime_get(), 200);
+	do {
 		//---set xdata index to SPI_MST_AUTO_COPY---
 		nvt_set_page(ts->mmap->TX_AUTO_COPY_EN);
 
@@ -1203,17 +1232,13 @@ int32_t nvt_check_tx_auto_copy(void)
 		CTP_SPI_READ(ts->client, buf, 2);
 
 		if (buf[1] == 0x00)
-			break;
+			return 0;
 
-		usleep_range(1000, 1000);
-	}
+		usleep_range(1000, 2000);
+	} while (ktime_before(ktime_get(), deadline));
 
-	if (i >= retry) {
-		NVT_ERR("failed, i=%d, buf[1]=0x%02X\n", i, buf[1]);
-		return -1;
-	} else {
-		return 0;
-	}
+	NVT_ERR("timeout, buf[1]=0x%02X\n", buf[1]);
+	return -1;
 }
 
 /*******************************************************
@@ -1554,6 +1579,7 @@ static ssize_t nvt_flash_read(struct file *file, char __user *buff,
 	uint8_t *str = NULL;
 	int32_t ret = 0;
 	int32_t retries = 0;
+	int32_t locked = 0;
 	int8_t spi_wr = 0;
 	uint8_t *buf;
 
@@ -1584,6 +1610,16 @@ static ssize_t nvt_flash_read(struct file *file, char __user *buff,
 		ret = -EFAULT;
 		goto out;
 	}
+
+	/* P0-R3: serialize [set_page + transfer] pairs against the IRQ
+	 * handler and all other SPI consumers. Without this lock an
+	 * interleaved page switch corrupts in-flight touch reads.
+	 */
+	if (mutex_lock_interruptible(&ts->lock)) {
+		ret = -ERESTARTSYS;
+		goto out;
+	}
+	locked = 1;
 
 #if NVT_TOUCH_ESD_PROTECT
 	/*
@@ -1649,6 +1685,8 @@ static ssize_t nvt_flash_read(struct file *file, char __user *buff,
 	}
 
 out:
+	if (locked)
+		mutex_unlock(&ts->lock);
 	kfree(str);
 	kfree(buf);
 kzalloc_failed:
@@ -1948,6 +1986,35 @@ Description:
 return:
 	n.a.
 *******************************************************/
+static void nvt_parse_irq_cpus(struct device *dev, struct nvt_ts_data *t)
+{
+	struct device_node *np = dev->of_node;
+	int cnt, i;
+	u32 cpu_id;
+
+	t->irq_affinity_valid = false;
+	if (!np)
+		return;
+
+	cnt = of_property_count_u32_elems(np, "novatek,irq-thread-cpus");
+	if (cnt <= 0) {
+		NVT_LOG("no novatek,irq-thread-cpus, keep scheduler default\n");
+		return;
+	}
+
+	cpumask_clear(&t->irq_affinity);
+	for (i = 0; i < cnt; i++) {
+		if (of_property_read_u32_index(np, "novatek,irq-thread-cpus",
+					       i, &cpu_id))
+			break;
+		if (cpu_id < nr_cpu_ids && cpu_possible(cpu_id))
+			cpumask_set_cpu(cpu_id, &t->irq_affinity);
+	}
+	t->irq_affinity_valid = !cpumask_empty(&t->irq_affinity);
+	NVT_LOG("irq thread cpumask=%*pbl valid=%d\n",
+		cpumask_pr_args(&t->irq_affinity), t->irq_affinity_valid);
+}
+
 #ifdef CONFIG_OF
 static int32_t nvt_parse_dt(struct device *dev)
 {
@@ -2027,9 +2094,10 @@ static int32_t nvt_parse_dt(struct device *dev)
 			ts->gamemode_config[2][2], ts->gamemode_config[2][3],
 			ts->gamemode_config[2][4]);
 	}
+
 	/* gamemode setup end */
 #endif /* #ifdef CONFIG_TOUCHSCREEN_XIAOMI_TOUCHFEATURE */
-
+	nvt_parse_irq_cpus(dev, ts);
 	return ret;
 }
 #else
@@ -2408,39 +2476,38 @@ static void nvt_xm_htc_print_data_log_in_one_line(int16_t *data, uint8_t x_num,
 	return;
 }
 #endif
+#define CRC32_POLYNOMIAL 0xE89061DB
 static uint64_t thp_cnt = 0;
 
-static inline int32_t nvt_crc32_check(int s32_message[], int s32_len)
+#if NVT_FRAME_CRC32_EN
+/* Byte-wise CRC32 over two segments (frame packet base is unaligned). */
+static uint32_t nvt_crc32_update(uint32_t rem, const uint8_t *d, size_t n)
 {
-	int i;
-	int j;
+	size_t i;
 	int k;
-	int s32_remainder;
-	unsigned char u8_byteData;
-
-	s32_remainder = 0UL;
-
-	for (i = 0; i < s32_len; i++) {
-		for (j = 3; j >= 0; j--) {
-			//Get the correct byte ordering
-			u8_byteData = s32_message[i] >> (j * 8);
-			//Bring the next byte into the remainder
-			s32_remainder ^= (u8_byteData << 24);
-			//Perform modulo-2 division, a bit at a time
-			for (k = 8; k > 0; --k) {
-				//Try to divide the current data bit
-				if (s32_remainder & (1UL << 31)) {
-					s32_remainder = (s32_remainder << 1) ^
-							CRC32_POLYNOMIAL;
-				} else {
-					s32_remainder = (s32_remainder << 1);
-				}
-			}
+	for (i = 0; i < n; i++) {
+		rem ^= ((uint32_t)d[i]) << 24;
+		for (k = 8; k > 0; --k) {
+			if (rem & (1UL << 31))
+				rem = (rem << 1) ^ CRC32_POLYNOMIAL;
+			else
+				rem = rem << 1;
 		}
 	}
-
-	return s32_remainder;
+	return rem;
 }
+
+static uint32_t nvt_crc32_frame(const uint8_t *pkt, size_t len)
+{
+	static const uint8_t zeros[4] = { 0 };
+	uint32_t rem = 0;
+	rem = nvt_crc32_update(rem, pkt, NVT_FRAME_CRC32_OFFSET);
+	rem = nvt_crc32_update(rem, zeros, 4); /* crc32 field as zero */
+	rem = nvt_crc32_update(rem, pkt + NVT_FRAME_CRC32_OFFSET + 4,
+			       len - NVT_FRAME_CRC32_OFFSET - 4);
+	return rem;
+}
+#endif /* NVT_FRAME_CRC32_EN */
 
 #if FRAME_DATA_PACKET_DEBUG_PRINT
 static uint32_t debug_print_count = 0; // for debug print
@@ -2488,30 +2555,35 @@ static irqreturn_t nvt_ts_work_func(int irq, void *data)
 	uint8_t *frame_data_packet;
 #endif
 
-	static struct task_struct *touch_task = NULL;
 	struct sched_param par = { .sched_priority = MAX_RT_PRIO - 1 };
-	struct cpumask irq_thread_cpu_mask;
 
-	if (touch_task == NULL) {
-		/* touch prio improve */
-		touch_task = current;
-		printk("nvt-ts:     touch_irq_thread prio improve to %d",
-		       MAX_RT_PRIO - 1);
-		sched_setscheduler_nocheck(touch_task, SCHED_FIFO, &par);
-
-		cpumask_clear(&irq_thread_cpu_mask);
-		for (int cpu = 0; cpu <= 2; cpu++) {
-			cpumask_set_cpu(cpu, &irq_thread_cpu_mask);
+	/* P1-1.2: per-thread tuning (state lives in ts so that a
+	 * re-requested IRQ thread after REGISTER_IRQ gets tuned again).
+	 */
+	if (!ts->irq_thread_tuned) {
+		ts->irq_thread_tuned = true;
+		sched_setscheduler_nocheck(current, SCHED_FIFO, &par);
+		if (ts->irq_affinity_valid) {
+			set_cpus_allowed_ptr(current, &ts->irq_affinity);
+			printk("nvt-ts: touch_irq_thread prio=%d affinity=%*pbl\n",
+			       MAX_RT_PRIO - 1,
+			       cpumask_pr_args(&ts->irq_affinity));
+		} else {
+			printk("nvt-ts: touch_irq_thread prio=%d affinity=not pinned\n",
+			       MAX_RT_PRIO - 1);
 		}
-		set_cpus_allowed_ptr(touch_task, &irq_thread_cpu_mask);
-		printk("nvt-ts:     touch_irq_thread CPU affinity %d ",
-		       touch_task->nr_cpus_allowed);
 	}
 
 	if (ts->ts_selftest_process) {
 		printk("nvt-ts:      ts_selftest_process is true");
 		return IRQ_HANDLED;
 	}
+
+	/* P2-5.3: baseline/raw/diff proc reads hold ts->lock for 10-30ms.
+	 * Drop this frame instead of queueing => no multi-frame stall.
+	 */
+	if (READ_ONCE(ts->mdata_reading))
+		return IRQ_HANDLED;
 
 	mutex_lock(&ts->lock);
 
@@ -2599,7 +2671,11 @@ static irqreturn_t nvt_ts_work_func(int irq, void *data)
 		goto XFER_ERROR;
 	}
 	// goto XFER_ERROR;
-	memcpy(ts->eventbuf_debug, ts->data_buf + 1, EVENTBUF_DEBUG_LEN);
+#ifdef CONFIG_TOUCHSCREEN_NVT_DEBUG_FS
+	if (unlikely(ts->fw_debug))
+#endif
+		memcpy(ts->eventbuf_debug, ts->data_buf + 1,
+		       EVENTBUF_DEBUG_LEN);
 	frame_data_packet = ts->data_buf + 1 + 256;
 	// check packet  crc  crc_len  crc_r  crc_r_len
 	protocol_type = *((uint8_t *)(frame_data_packet));
@@ -2614,6 +2690,19 @@ static irqreturn_t nvt_ts_work_func(int irq, void *data)
 		       crc, crc_len, crc_r, crc_r_len);
 		goto XFER_ERROR;
 	}
+#if NVT_FRAME_CRC32_EN
+	if (ts->frame_crc32_en &&
+	    crc_len > NVT_FRAME_CRC32_OFFSET + 4) {
+		uint32_t fw_crc32 = get_unaligned_le32(
+			frame_data_packet + NVT_FRAME_CRC32_OFFSET);
+		uint32_t calc = nvt_crc32_frame(frame_data_packet, crc_len);
+		if (calc != fw_crc32) {
+			printk("nvt-ts: frame crc32 mismatch calc=0x%08X fw=0x%08X, drop\n",
+			       calc, fw_crc32);
+			goto XFER_ERROR;
+		}
+	}
+#endif
 	/* copy data */
 	ktime_get_real_ts64(&time);
 	memcpy(tp_frame->tp_raw, frame_data_packet, ts->frame_len);
@@ -2994,6 +3083,14 @@ static int nvt_enable_gesture_mode(int value)
 
 	if (value) {
 		msleep(35);
+		/* P0-R2: pin the page before writing HOST_CMD, the page register
+		 * may have been moved by MP/fw-update/ext_proc transactions.
+		 */
+		ret = nvt_set_page(ts->mmap->EVENT_BUF_ADDR | EVENT_MAP_HOST_CMD);
+		if (ret < 0) {
+			NVT_ERR("set event page failed! ret=%d\n", ret);
+			return ret;
+		}
 		/*---write command to enter "wakeup gesture mode"---*/
 		buf[0] = EVENT_MAP_HOST_CMD;
 		buf[1] = 0x13;
@@ -3006,6 +3103,11 @@ static int nvt_enable_gesture_mode(int value)
 		nvt_log_gesture_state("Gesture mode on",
 				      nvt_gesture_cmd(xiaomi_get_gesture_type(TOUCH_ID)));
 	} else {
+		ret = nvt_set_page(ts->mmap->EVENT_BUF_ADDR | EVENT_MAP_HOST_CMD);
+		if (ret < 0) {
+			NVT_ERR("set event page failed! ret=%d\n", ret);
+			return ret;
+		}
 		/*---write command to enter "deep sleep mode"---*/
 		buf[0] = EVENT_MAP_HOST_CMD;
 		buf[1] = 0x11;
@@ -3318,7 +3420,15 @@ static void nvt_set_charge_state(int state)
 	if (bTouchIsAwake) {
 		ts->is_usb_exist = !!state;
 		NVT_LOG("Power supply state:%d", ts->is_usb_exist);
-
+		/* P0-R1: EVENT_MAP_HOST_CMD must be accessed on EVENT_BUF page.
+		 * Page register is persistent; without this the charging command
+		 * lands on whatever page the last SPI transaction left behind.
+		 */
+		ret = nvt_set_page(ts->mmap->EVENT_BUF_ADDR | EVENT_MAP_HOST_CMD);
+		if (ret) {
+			NVT_ERR("set event page failed, ret = %d!", ret);
+			goto charge_out;
+		}
 		buf[0] = EVENT_MAP_HOST_CMD;
 		if (ts->is_usb_exist) {
 			buf[1] = 0x53;
@@ -3332,6 +3442,7 @@ static void nvt_set_charge_state(int state)
 			NVT_ERR("USB status set failed, ret = %d!", ret);
 		}
 	}
+charge_out:
 	mutex_unlock(&ts->lock);
 }
 
@@ -3478,6 +3589,7 @@ static int nvt_touch_doze_analysis(int input)
 		break;
 	case REGISTER_IRQ:
 		if (ts->client->irq) {
+			ts->irq_thread_tuned = false; /* P1-1.2: new thread needs retune */
 			ret = request_threaded_irq(
 				ts->client->irq, nvt_ts_work_func_irq_handler,
 				nvt_ts_work_func,
@@ -3793,14 +3905,14 @@ static int32_t nvt_ts_probe(struct spi_device *client)
 		return -ENOMEM;
 	}
 
-	ts->xbuf = (uint8_t *)kzalloc(NVT_XBUF_LEN, GFP_KERNEL);
+	ts->xbuf = (uint8_t *)kvzalloc(NVT_XBUF_LEN, GFP_KERNEL);
 	if (ts->xbuf == NULL) {
 		NVT_ERR("kzalloc for xbuf failed!\n");
 		ret = -ENOMEM;
 		goto err_malloc_xbuf;
 	}
 
-	ts->rbuf = (uint8_t *)kzalloc(NVT_READ_LEN, GFP_KERNEL);
+	ts->rbuf = (uint8_t *)kvzalloc(NVT_READ_LEN, GFP_KERNEL);
 	if (ts->rbuf == NULL) {
 		NVT_ERR("kzalloc for rbuf failed!\n");
 		ret = -ENOMEM;
@@ -3808,14 +3920,14 @@ static int32_t nvt_ts_probe(struct spi_device *client)
 	}
 
 #if TOUCH_THP_SUPPORT
-	ts->data_buf = (uint8_t *)kzalloc(DATA_BUF_LEN, GFP_KERNEL);
+	ts->data_buf = (uint8_t *)kvzalloc(DATA_BUF_LEN, GFP_KERNEL);
 	if (ts->data_buf == NULL) {
 		NVT_ERR("kzalloc for data_buf failed!\n");
 		ret = -ENOMEM;
 		goto err_malloc_data_buf;
 	}
 
-	ts->eventbuf_debug = (uint8_t *)kzalloc(EVENTBUF_DEBUG_LEN, GFP_KERNEL);
+	ts->eventbuf_debug = (uint8_t *)kvzalloc(EVENTBUF_DEBUG_LEN, GFP_KERNEL);
 	if (ts->eventbuf_debug == NULL) {
 		NVT_ERR("kzalloc for eventbuf_debug failed!\n");
 		ret = -ENOMEM;
@@ -4262,8 +4374,13 @@ static int32_t nvt_ts_probe(struct spi_device *client)
 		NVT_LOG("READ LOCKDOWN!!!");
 	}
 	// send edge filter params
-	add_common_data_to_buf(0, SET_LONG_VALUE, Touch_Grip_Mode, 96,
-			       (int *)edge_filter_params);
+	BUILD_BUG_ON(ARRAY_SIZE(edge_filter_params) != 128);
+	if (!nvt_edge_filter_params_valid(edge_filter_params, 12)) {
+		NVT_ERR("[DIS-TF-TOUCH] edge filter params invalid, skip!\n");
+	} else {
+		add_common_data_to_buf(0, SET_LONG_VALUE, Touch_Grip_Mode, 96,
+				       (int *)edge_filter_params);
+	}
 
 	NVT_LOG("end\n");
 
@@ -4347,19 +4464,19 @@ err_ckeck_full_duplex:
 	}
 err_malloc_eventbuf_debug:
 	if (ts->data_buf) {
-		kfree(ts->data_buf);
+		kvfree(ts->data_buf);
 		ts->data_buf = NULL;
 	}
 err_malloc_data_buf:
 #endif /* #if TOUCH_THP_SUPPORT */
 	//thp end 6.8
 	if (ts->rbuf) {
-		kfree(ts->rbuf);
+		kvfree(ts->rbuf);
 		ts->rbuf = NULL;
 	}
 err_malloc_rbuf:
 	if (ts->xbuf) {
-		kfree(ts->xbuf);
+		kvfree(ts->xbuf);
 		ts->xbuf = NULL;
 	}
 err_malloc_xbuf:
@@ -4437,8 +4554,20 @@ static void nvt_ts_remove(struct spi_device *client)
 
 	spi_set_drvdata(client, NULL);
 
+	if (ts->eventbuf_debug) {
+		kvfree(ts->eventbuf_debug);
+		ts->eventbuf_debug = NULL;
+	}
+	if (ts->data_buf) {
+		kvfree(ts->data_buf);
+		ts->data_buf = NULL;
+	}
+	if (ts->rbuf) {
+		kvfree(ts->rbuf);
+		ts->rbuf = NULL;
+	}
 	if (ts->xbuf) {
-		kfree(ts->xbuf);
+		kvfree(ts->xbuf);
 		ts->xbuf = NULL;
 	}
 
