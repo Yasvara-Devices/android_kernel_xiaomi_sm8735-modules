@@ -2171,6 +2171,7 @@ static int _sde_kms_setup_displays(struct drm_device *dev,
 	int rc = 0;
 	u32 dsc_count = 0, mixer_count = 0;
 	u32 max_dp_dsc_count, max_dp_mixer_count;
+	u32 clone_mask = 0;
 	char cesta_client_name[32];
 
 	if (!dev || !priv || !sde_kms) {
@@ -2428,6 +2429,22 @@ static int _sde_kms_setup_displays(struct drm_device *dev,
 			priv->encoders[priv->num_encoders++] = encoder;
 		}
 	}
+
+	/*
+	 * drm_atomic_check_valid_clones() rejects any commit whose crtc carries
+	 * more than one encoder unless every encoder in the mask lists the others
+	 * in possible_clones. SDE drives several encoders from one crtc by design
+	 * - concurrent writeback runs alongside the dsi encoder - and validates the
+	 * real routing constraints itself in sde_encoder_virt_atomic_check(), so
+	 * the encoders are mutually cloneable as far as drm core is concerned.
+	 * Leaving possible_clones unset is not neutral: drm_mode_config_validate()
+	 * fixes it up to "self only", which fails that check and drops the frame.
+	 */
+	for (i = 0; i < priv->num_encoders; i++)
+		clone_mask |= drm_encoder_mask(priv->encoders[i]);
+
+	for (i = 0; i < priv->num_encoders; i++)
+		priv->encoders[i]->possible_clones = clone_mask;
 
 	return 0;
 }
