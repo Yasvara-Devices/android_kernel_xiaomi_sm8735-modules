@@ -42,7 +42,7 @@
  */
 #define CFG_EHT_SU_BEAMFORMER CFG_BOOL( \
 				"eht_su_beamformer", \
-				0, \
+				1, \
 				"EHT Su Beamformer")
 
 /*
@@ -50,7 +50,7 @@
  * eht_su_beamformee - Enable SU beamformee
  * @Min: 0
  * @Max: 1
- * @Default: 0
+ * @Default: 1
  *
  * This ini is used to enable or disable SU beamformee
  *
@@ -64,7 +64,7 @@
  */
 #define CFG_EHT_SU_BEAMFORMEE CFG_BOOL( \
 				"eht_su_beamformee", \
-				0, \
+				1, \
 				"EHT Su Beamformee")
 
 /*
@@ -72,7 +72,7 @@
  * mu_bformer_le_80mhz - Enable MU beamformer for BW <= 80
  * @Min: 0
  * @Max: 1
- * @Default: 0
+ * @Default: 1
  *
  * This ini is used to enable or disable MU beamformer for BW <= 80
  *
@@ -86,7 +86,7 @@
  */
 #define CFG_EHT_MU_BFORMER_LE_80MHZ CFG_BOOL( \
 				"mu_bformer_le_80mhz", \
-				0, \
+				1, \
 				"EHT MU Beamformer BW <= 80 MHz")
 
 /*
@@ -94,7 +94,7 @@
  * mu_bformer_160mhz - Enable MU beamformer for BW == 160
  * @Min: 0
  * @Max: 1
- * @Default: 0
+ * @Default: 1
  *
  * This ini is used to enable or disable MU beamformer for BW == 160
  *
@@ -108,7 +108,7 @@
  */
 #define CFG_EHT_MU_BFORMER_160MHZ CFG_BOOL( \
 				"mu_bformer_160mhz", \
-				0, \
+				1, \
 				"EHT MU Beamformer BW = 160 MHz")
 
 /*
@@ -116,7 +116,7 @@
  * mu_bformer_320mhz - Enable MU beamformer for BW == 320
  * @Min: 0
  * @Max: 1
- * @Default: 0
+ * @Default: 1
  *
  * This ini is used to enable or disable MU beamformer for BW == 320
  *
@@ -130,7 +130,7 @@
  */
 #define CFG_EHT_MU_BFORMER_320MHZ CFG_BOOL( \
 				"mu_bformer_320mhz", \
-				0, \
+				1, \
 				"EHT MU Beamformer BW = 320 MHz")
 
 /*

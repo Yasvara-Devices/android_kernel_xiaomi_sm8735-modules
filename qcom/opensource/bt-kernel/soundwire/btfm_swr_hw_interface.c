@@ -180,7 +180,11 @@ void btfm_get_sampling_rate(uint32_t *sampling_rate)
 	if (*sampling_rate == 44100 || *sampling_rate == 48000) {
 		if (usecase_codec == LDAC ||
 		    usecase_codec == APTX_AD ||
-		    usecase_codec == LHDC)
+		    usecase_codec == LHDC ||
+		    usecase_codec == APTX_HD ||
+		    usecase_codec == APTX ||
+		    usecase_codec == SSC ||
+		    usecase_codec == MIHC)
 			*sampling_rate = (*sampling_rate) * 2;
 	}
 
@@ -355,17 +359,19 @@ static struct hwep_dai_driver btfmswr_dai_driver[] = {
 		.id = BTAUDIO_TX,
 		.capture = {
 			.stream_name = "BT Audio SWR Tx Capture",
-			/* 8 KHz or 16 KHz */
+			/* 8/16/44.1/48/88.2/96/192 KHz */
 			.rates = SNDRV_PCM_RATE_8000 | SNDRV_PCM_RATE_16000
 				| SNDRV_PCM_RATE_8000_192000
 				| SNDRV_PCM_RATE_44100 | SNDRV_PCM_RATE_48000
 				| SNDRV_PCM_RATE_88200 | SNDRV_PCM_RATE_96000
 				| SNDRV_PCM_RATE_192000,
-			.formats = SNDRV_PCM_FMTBIT_S16_LE, /* 16 bits */
+			.formats = SNDRV_PCM_FMTBIT_S16_LE
+				| SNDRV_PCM_FMTBIT_S24_LE
+				| SNDRV_PCM_FMTBIT_S32_LE, /* 16/24/32 bits */
 			.rate_max = 192000,
 			.rate_min = 8000,
 			.channels_min = 1,
-			.channels_max = 1,
+			.channels_max = 2,
 		},
 		.dai_ops = &btfmswr_hw_dai_ops,
 	},
@@ -374,17 +380,19 @@ static struct hwep_dai_driver btfmswr_dai_driver[] = {
 		.id = BTAUDIO_RX,
 		.playback = {
 			.stream_name = "BT Audio SWR Rx Playback",
-			/* 8/16/44.1/48/88.2/96 Khz */
+			/* 8/16/44.1/48/88.2/96/192 Khz */
 			.rates = SNDRV_PCM_RATE_8000 | SNDRV_PCM_RATE_16000
 				| SNDRV_PCM_RATE_8000_192000
 				| SNDRV_PCM_RATE_44100 | SNDRV_PCM_RATE_48000
 				| SNDRV_PCM_RATE_88200 | SNDRV_PCM_RATE_96000
 				| SNDRV_PCM_RATE_192000,
-			.formats = SNDRV_PCM_FMTBIT_S16_LE, /* 16 bits */
+			.formats = SNDRV_PCM_FMTBIT_S16_LE
+				| SNDRV_PCM_FMTBIT_S24_LE
+				| SNDRV_PCM_FMTBIT_S32_LE, /* 16/24/32 bits */
 			.rate_max = 192000,
 			.rate_min = 8000,
 			.channels_min = 1,
-			.channels_max = 1,
+			.channels_max = 2,
 		},
 		.dai_ops = &btfmswr_hw_dai_ops,
 	},
@@ -399,11 +407,13 @@ static struct hwep_dai_driver btfmswr_dai_driver[] = {
 				| SNDRV_PCM_RATE_44100 | SNDRV_PCM_RATE_48000
 				| SNDRV_PCM_RATE_88200 | SNDRV_PCM_RATE_96000
 				| SNDRV_PCM_RATE_192000,
-			.formats = SNDRV_PCM_FMTBIT_S16_LE, /* 16 bits */
+			.formats = SNDRV_PCM_FMTBIT_S16_LE
+				| SNDRV_PCM_FMTBIT_S24_LE
+				| SNDRV_PCM_FMTBIT_S32_LE, /* 16/24/32 bits */
 			.rate_max = 192000,
 			.rate_min = 8000,
 			.channels_min = 1,
-			.channels_max = 1,
+			.channels_max = 2,
 		},
 		.dai_ops = &btfmswr_hw_dai_ops,
 	},
@@ -412,17 +422,19 @@ static struct hwep_dai_driver btfmswr_dai_driver[] = {
 		.id = BTAUDIO_RX2,
 		.playback = {
 			.stream_name = "BT Audio SWR Rx2 Playback",
-			/* 8/16/44.1/48/88.2/96 Khz */
+			/* 8/16/44.1/48/88.2/96/192 Khz */
 			.rates = SNDRV_PCM_RATE_8000 | SNDRV_PCM_RATE_16000
 				| SNDRV_PCM_RATE_8000_192000
 				| SNDRV_PCM_RATE_44100 | SNDRV_PCM_RATE_48000
 				| SNDRV_PCM_RATE_88200 | SNDRV_PCM_RATE_96000
 				| SNDRV_PCM_RATE_192000,
-			.formats = SNDRV_PCM_FMTBIT_S16_LE, /* 16 bits */
+			.formats = SNDRV_PCM_FMTBIT_S16_LE
+				| SNDRV_PCM_FMTBIT_S24_LE
+				| SNDRV_PCM_FMTBIT_S32_LE, /* 16/24/32 bits */
 			.rate_max = 192000,
 			.rate_min = 8000,
 			.channels_min = 1,
-			.channels_max = 1,
+			.channels_max = 2,
 		},
 		.dai_ops = &btfmswr_hw_dai_ops,
 	},

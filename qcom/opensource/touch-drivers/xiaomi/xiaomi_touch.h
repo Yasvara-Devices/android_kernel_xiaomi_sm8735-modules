@@ -464,6 +464,16 @@ void unregister_xiaomi_stylus_input_dev(s8 touch_id);
 int report_touch_event(s8 touch_id, u8 event_count);
 dma_addr_t get_report_point_info_phy_addr(void);
 
+/* GameSpace's real input-side accidental-touch filter. */
+bool xiaomi_touch_filter_should_suppress(s8 touch_id, int slot, bool is_up,
+					 int x, int y, int max_x, int max_y);
+int xiaomi_touch_filter_set_profile(int edge_filter, int grip_suppression,
+				    int orientation);
+void xiaomi_touch_filter_get_profile(int *edge_filter, int *grip_suppression,
+				     int *orientation);
+void xiaomi_touch_filter_get_stats(s8 touch_id, u64 *edge_rejected,
+				   u64 *grip_rejected);
+
 #if defined(FLIP_STATE)
 void enable_temperature_detection_func(bool is_resume, s8 touch_id);
 #else

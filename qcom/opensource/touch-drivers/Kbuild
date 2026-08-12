@@ -123,6 +123,7 @@ ifeq ($(CONFIG_TOUCHSCREEN_XIAOMI_TOUCHFEATURE), y)
 		 ./xiaomi/xiaomi_touch_sys.o \
 		 ./xiaomi/xiaomi_touch_mode.o \
 		 ./xiaomi/xiaomi_touch_evdev.o \
+		 ./xiaomi/xiaomi_touch_filter.o \
 		 ./xiaomi/xiaomi_touch_device.o
 	obj-$(CONFIG_MSM_TOUCH) += xiaomi_touch.o
 endif

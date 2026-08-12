@@ -652,6 +652,67 @@ CREATE_ATTR(
 		return count;
 	});
 
+/*
+ * GameSpace profile ABI.  One write updates every field together, so a
+ * per-game switch cannot briefly expose a partial edge/grip configuration.
+ * The closed touchfeature HAL remains usable for report-rate control, but its
+ * mode 7/15 setters do not reach this THP input path.
+ */
+CREATE_ATTR(
+	gamespace_touch_profile,
+	{
+		int edge_filter;
+		int grip_suppression;
+		int orientation;
+
+		xiaomi_touch_filter_get_profile(&edge_filter, &grip_suppression,
+					      &orientation);
+		return scnprintf(buf, PAGE_SIZE,
+				 "edge_filter=%d grip_suppression=%d orientation=%d\n",
+				 edge_filter, grip_suppression, orientation);
+	},
+	{
+		int edge_filter;
+		int grip_suppression;
+		int orientation;
+
+		if (sscanf(buf, "%d %d %d", &edge_filter, &grip_suppression,
+			   &orientation) != 3)
+			return -EINVAL;
+		if (xiaomi_touch_filter_set_profile(edge_filter, grip_suppression,
+						    orientation))
+			return -EINVAL;
+
+		sysfs_notify(&xiaomi_touch_dev->kobj, NULL,
+			     "gamespace_touch_profile");
+		return count;
+	});
+
+static ssize_t show_gamespace_touch_capabilities(struct device *dev,
+					  struct device_attribute *attr, char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE,
+			 "version=1 edge_filter=0-3 grip_suppression=0-3 "
+			 "orientation=0-3 scope=initial_contact\n");
+}
+static DEVICE_ATTR(gamespace_touch_capabilities, S_IRUGO,
+			   show_gamespace_touch_capabilities, NULL);
+
+static ssize_t show_gamespace_touch_stats(struct device *dev,
+					  struct device_attribute *attr, char *buf)
+{
+	u64 edge_rejected = 0;
+	u64 grip_rejected = 0;
+
+	xiaomi_touch_filter_get_stats(TOUCH_ID, &edge_rejected, &grip_rejected);
+	return scnprintf(buf, PAGE_SIZE,
+			 "edge_rejected=%llu grip_rejected=%llu\n",
+			 (unsigned long long)edge_rejected,
+			 (unsigned long long)grip_rejected);
+}
+static DEVICE_ATTR(gamespace_touch_stats, S_IRUGO,
+			   show_gamespace_touch_stats, NULL);
+
 #ifdef TOUCH_FOD_SUPPORT
 CREATE_ATTR(
 	fod_test, { return 0; },
@@ -760,6 +821,9 @@ static struct attribute *touch_attr_group[] = {
 	&dev_attr_touch_thp_ic_cmd_data.attr,
 	&dev_attr_touch_thp_ic_cmd.attr,
 	&dev_attr_touch_finger_status.attr,
+	&dev_attr_gamespace_touch_profile.attr,
+	&dev_attr_gamespace_touch_capabilities.attr,
+	&dev_attr_gamespace_touch_stats.attr,
 	&dev_attr_touch_log_level.attr,
 #ifdef DFS_DEBUG_TEST
 	&dev_attr_touch_dfs_test.attr,

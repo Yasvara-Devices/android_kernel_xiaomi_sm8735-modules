@@ -172,7 +172,7 @@
 
 #define CFG_HE_AMSDU_IN_AMPDU CFG_BOOL( \
 				"he_amsdu_in_ampdu", \
-				0, \
+				1, \
 				"He Amsdu In Ampdu")
 
 #define CFG_HE_MTID_AGGR_TX CFG_UINT( \

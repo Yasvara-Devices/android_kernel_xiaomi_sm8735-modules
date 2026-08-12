@@ -51,7 +51,7 @@
 				"gSetTxChainmask1x1", \
 				0, \
 				3, \
-				1, \
+				3, \
 				CFG_VALUE_OR_DEFAULT, \
 				"1x1 VHT Tx Chainmask")
 
@@ -60,7 +60,7 @@
  * gSetRxChainmask1x1 - Sets Receive chain mask.
  * @Min: 0
  * @Max: 3
- * @Default: 1
+ * @Default: 3
  *
  * This ini is  used to set Receive chain mask.
  *
@@ -82,7 +82,7 @@
 				"gSetRxChainmask1x1", \
 				0, \
 				3, \
-				1, \
+				3, \
 				CFG_VALUE_OR_DEFAULT, \
 				"1x1 VHT Rx Chainmask")
 

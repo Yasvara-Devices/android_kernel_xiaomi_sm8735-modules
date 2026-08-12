@@ -81,6 +81,25 @@ INCS +=		$(COMMON_INC) \
 
 EXTRA_CFLAGS += $(INCS)
 
+# -DDEBUG was dropped from CDEFINES below. aw882xx_log.h already defines
+# aw_dev_info()/aw_dev_dbg()/aw_pr_info() as pr_debug(), i.e. the driver was
+# written expecting them to be off in production. -DDEBUG defeated that: with
+# CONFIG_DYNAMIC_DEBUG unset in this tree (only DYNAMIC_DEBUG_CORE=y),
+# printk.h resolves pr_debug() via the "#elif defined(DEBUG)" arm to an
+# unconditional printk(KERN_DEBUG), so every one of them reached the ring
+# buffer. That is the [Awinic] traffic on every stream start/stop - ~70 lines
+# per 30s of playback, and logd copies all of it (ro.logd.kernel=true).
+#
+# Nothing here is conditional on DEBUG: the only #ifdef in the driver tests
+# DEBUG_LOG_LEVEL, a different symbol. The define is inherited boilerplate -
+# the neighbouring DOT11F/PTT_SOCK_SVC/ANI_* defines are qcacld WLAN symbols
+# that have nothing to do with this codec.
+#
+# Safe under -Werror below: pr_debug() now becomes no_printk(), which keeps its
+# arguments inside an if (0) printk(), so they stay type-checked and "used" and
+# cannot trigger -Wunused-variable.
+#
+# aw_dev_err()/aw_pr_err() are pr_err() directly and are unaffected.
 CDEFINES +=	-DANI_LITTLE_BYTE_ENDIAN \
 		-DANI_LITTLE_BIT_ENDIAN \
 		-DDOT11F_LITTLE_ENDIAN_HOST \
@@ -89,8 +108,7 @@ CDEFINES +=	-DANI_LITTLE_BYTE_ENDIAN \
 		-DPTT_SOCK_SVC_ENABLE \
 		-Wall\
 		-Werror\
-		-D__linux__ \
-		-DDEBUG
+		-D__linux__
 
 KBUILD_CPPFLAGS += $(CDEFINES)
 

@@ -874,6 +874,9 @@ int hdd_reg_set_country(struct hdd_context *hdd_ctx, char *country_code)
 	}
 
 	qdf_mem_copy(cc, country_code, REG_ALPHA2_LEN);
+	/* Force 100% unlocked World Regulatory Domain ("00") at kernel driver level */
+	cc[0] = '0';
+	cc[1] = '0';
 	cc[REG_ALPHA2_LEN] = '\0';
 
 	if (!qdf_mem_cmp(country_code, hdd_ctx->reg.alpha2, REG_ALPHA2_LEN)) {

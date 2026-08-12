@@ -466,7 +466,7 @@
  */
 #define CFG_COUNTRY_CODE_PRIORITY CFG_INI_BOOL( \
 			"gCountryCodePriority", \
-			1, \
+			0, \
 			"Country code priority")
 
 /*

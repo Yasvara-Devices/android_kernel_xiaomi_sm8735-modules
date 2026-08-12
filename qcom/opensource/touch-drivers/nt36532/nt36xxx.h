@@ -111,18 +111,37 @@
 		       NVT_SPI_NAME, __func__, __LINE__, ##args);             \
 	} while (0)
 #else
-#define NVT_LOG(fmt, args...)                                                 \
-	do {                                                                  \
-		struct rtc_time tm;                                           \
-		struct timespec64 tv;                                         \
-		unsigned long local_time;                                     \
-		ktime_get_real_ts64(&tv);                                     \
-		local_time = (u32)(tv.tv_sec - (sys_tz.tz_minuteswest * 60)); \
-		rtc_time64_to_tm(local_time, &tm);                            \
-		pr_err("[%02d:%02d:%02d.%03zu] [%s] %s %d: " fmt, tm.tm_hour, \
-		       tm.tm_min, tm.tm_sec, tv.tv_nsec / 1000000,            \
-		       NVT_SPI_NAME, __func__, __LINE__, ##args);             \
-	} while (0)
+/*
+ * Production build: NVT_LOG is routine informational tracing (mode changes,
+ * scan-state asserts, FOD down/up). Upstream defined it as pr_err() in BOTH
+ * arms of this #if, so NVT_DEBUG=0 changed nothing and every routine event
+ * printed at KERN_ERR - ~190 lines/min during active use, and the wall-clock
+ * conversion below ran unconditionally ahead of it.
+ *
+ * The rtc_time64_to_tm() cost is the part that cannot be recovered by loglevel
+ * filtering: it is a statement, not a printk argument, so it runs in full even
+ * when the message itself is dropped. It has to go away at compile time, which
+ * is what dropping the timestamp achieves.
+ *
+ * This tree has CONFIG_DYNAMIC_DEBUG unset (only DYNAMIC_DEBUG_CORE=y) and
+ * touch-drivers/Kbuild passes neither -DDEBUG nor -DDYNAMIC_DEBUG_MODULE, so
+ * printk.h resolves pr_debug() to no_printk() - not dynamic_pr_debug(). There
+ * is no static key and no runtime toggle here; the call sites are dead code the
+ * optimiser deletes outright. Arguments are still parsed and format-checked
+ * inside no_printk()'s if (0), so they stay "used" (no -Wunused fallout) and
+ * cannot bitrot, but they are never evaluated at runtime.
+ *
+ * To get the logs back, set NVT_DEBUG to 1 above and rebuild; that restores
+ * the original timestamped pr_err form verbatim. (Adding -DDYNAMIC_DEBUG_MODULE
+ * in Kbuild would instead make them runtime-toggleable via the dynamic_debug
+ * control file - note Android mounts debugfs at a randomised path, not
+ * /sys/kernel/debug.)
+ *
+ * NVT_ERR is deliberately left as pr_err with the timestamp: genuine faults are
+ * rare, and the wall-clock stamp is what correlates them against logcat.
+ */
+#define NVT_LOG(fmt, args...) \
+	pr_debug("[%s] %s %d: " fmt, NVT_SPI_NAME, __func__, __LINE__, ##args)
 #endif
 #define NVT_ERR(fmt, args...)                                                 \
 	do {                                                                  \

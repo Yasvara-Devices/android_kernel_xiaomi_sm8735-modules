@@ -229,7 +229,8 @@ static struct vreg_data platform_vregs_info_peach[] = {
 	{NULL, "qcom,bt-vdd12-io",      1080000, 1980000, 0, false, true,
 		{BT_VDD_IO_LDO, BT_VDD_IO_LDO_CURRENT}},
 	/* AV91C_VDD Extractor */
-	{NULL, "qcom,bt-ant-ldo",  1776000, 1776000, 0, false, true,
+	/* AV91C_VDD Extractor - Boost antenna LDO for stronger BT TX power */
+	{NULL, "qcom,bt-ant-ldo",  1776000, 2300000, 0, false, true,
 		{BT_VDD_ANT_LDO, BT_VDD_ANT_LDO_CURRENT}},
 	/* BT_CX_MX */
 	{NULL, "qcom,bt-vdd-dig",      700000,  2100000,  0, false, true,
@@ -748,7 +749,7 @@ static int bt_resetb_operation(int resetb)
 	rc = bt_pull_resetb(resetb, RESETB_GPIO_LOW);
 	if (rc)
 		return rc;
-	msleep(20);
+	msleep(10);
 	/* making resetb to high after delay */
 	pr_info("BTON: Turn bt_resetb_gpio to High\n");
 	rc = bt_pull_resetb(resetb, RESETB_GPIO_HIGH);
@@ -791,7 +792,7 @@ static int bt_configure_gpios(int on)
 		}
 		power_src.platform_state[BT_RESET_GPIO] =
 			gpio_get_value(bt_reset_gpio);
-		msleep(50);
+		msleep(25);
 		pr_info("BTON:Turn Bt OFF post asserting BT_EN to low\n");
 		pr_info("bt-reset-gpio(%d) value(%d)\n", bt_reset_gpio,
 			gpio_get_value(bt_reset_gpio));
@@ -849,7 +850,7 @@ static int bt_configure_gpios(int on)
 			}
 			pr_info("BTON: WLAN OFF waiting for 100ms delay\n");
 			pr_info("for AON output to fully discharge\n");
-			msleep(100);
+			msleep(50);
 			pr_info("BTON: WLAN OFF Asserting BT_EN to high\n");
 			btpower_set_xo_clk_gpio_state(true);
 			if (bt_resetb_gpio  >=  0)
@@ -880,7 +881,7 @@ static int bt_configure_gpios(int on)
 				gpio_get_value(bt_reset_gpio);
 			btpower_set_xo_clk_gpio_state(false);
 		}
-		msleep(50);
+		msleep(25);
 #ifdef CONFIG_MSM_BT_OOBS
 		bt_configure_wakeup_gpios(on);
 #endif

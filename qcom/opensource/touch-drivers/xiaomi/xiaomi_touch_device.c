@@ -280,6 +280,19 @@ static struct input_dev *report_finger_event(s8 touch_id,
 			 touch_id);
 		return NULL;
 	}
+	/*
+	 * TouchReport owns raw-frame decoding under THP.  Filter its final point
+	 * stream here so edge/grip protection changes the actual Android input
+	 * event stream rather than only a vendor-HAL bookkeeping value.
+	 */
+	if (xiaomi_touch_filter_should_suppress(
+		    touch_id, report_point->finger.prop[FINGER_SLOT],
+		    report_point->finger.point_action == ACTION_UP,
+		    report_point->finger.x, report_point->finger.y,
+		    input_abs_get_max(input_dev, ABS_MT_POSITION_X),
+		    input_abs_get_max(input_dev, ABS_MT_POSITION_Y)))
+		return NULL;
+
 	if (report_point->finger.point_action != ACTION_UP) {
 		input_report_key(input_dev, BTN_TOUCH, 1);
 		input_report_key(input_dev, BTN_TOOL_FINGER, 1);
