@@ -1829,8 +1829,8 @@ extern int32_t nvt_xm_htc_set_fod_enable(int16_t fod_enable);
 
 void nvt_ts_fod_down_report(uint16_t fod_x, uint16_t fod_y)
 {
-	update_fod_press_status(1);
 	ts->fod_finger = true;
+	update_fod_press_status(1);
 	input_mt_slot(ts->input_dev, TOUCH_FOD_ID);
 	input_mt_report_slot_state(ts->input_dev, MT_TOOL_FINGER, 1);
 	input_report_key(ts->input_dev, BTN_TOUCH, 1);
