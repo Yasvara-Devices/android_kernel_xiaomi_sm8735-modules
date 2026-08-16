@@ -95,7 +95,7 @@ extern void nvt_change_mode(uint8_t mode);
 struct nvt_ts_data *ts;
 
 #if BOOT_UPDATE_FIRMWARE
-static struct workqueue_struct *nvt_fwu_wq;
+struct workqueue_struct *nvt_fwu_wq;
 extern void Boot_Update_Firmware(struct work_struct *work);
 #endif
 
@@ -2015,6 +2015,38 @@ static void nvt_parse_irq_cpus(struct device *dev, struct nvt_ts_data *t)
 		cpumask_pr_args(&t->irq_affinity), t->irq_affinity_valid);
 }
 
+/*******************************************************
+Description:
+	Point the hard irq at the same cpus as the threaded
+	handler, so a frame does not cross clusters.
+
+return:
+	n.a.
+*******************************************************/
+static void nvt_apply_irq_affinity(struct nvt_ts_data *t)
+{
+	int32_t ret;
+
+	if (!t->irq_affinity_valid || !t->client->irq)
+		return;
+
+	/*
+	 * The threaded handler picks up novatek,irq-thread-cpus itself on its
+	 * first run, but the top half keeps following
+	 * /proc/irq/default_smp_affinity, which is the little cluster here.
+	 * Leaving the two halves split costs a cross-cluster wakeup on every
+	 * frame, so aim the hard irq at the same mask.  This has to be redone
+	 * after each request_threaded_irq(), which resets affinity.
+	 */
+	ret = irq_set_affinity(t->client->irq, &t->irq_affinity);
+	if (ret)
+		NVT_ERR("set irq %d affinity to %*pbl failed. ret=%d\n",
+			t->client->irq, cpumask_pr_args(&t->irq_affinity), ret);
+	else
+		NVT_LOG("irq %d affinity=%*pbl\n", t->client->irq,
+			cpumask_pr_args(&t->irq_affinity));
+}
+
 #ifdef CONFIG_OF
 static int32_t nvt_parse_dt(struct device *dev)
 {
@@ -2895,20 +2927,14 @@ static int32_t nvt_ts_check_chip_ver_trim_loop(void)
 //thp start 6.8
 int nvt_enable_touch_raw(int en)
 {
-	// if (en) {
-	//cleanUp(0);
-	ts->enable_touch_raw = true;
+	ts->enable_touch_raw = !!en;
 	add_common_data_to_buf(0, SET_CUR_VALUE, THP_HAL_CHARGING_STATUS, 1,
 			       &ts->is_usb_exist);
-	// } else {
-	// 	//cleanUp(1);
-	// 	ts->enable_touch_raw = false;
-	// }
-	// ts->need_update_firmware = true;
-	// nvt_match_fw();
-	mutex_lock(&ts->lock);
-	nvt_update_firmware(BOOT_UPDATE_FIRMWARE_NAME);
-	mutex_unlock(&ts->lock);
+	if (en) {
+		mutex_lock(&ts->lock);
+		nvt_update_firmware(BOOT_UPDATE_FIRMWARE_NAME);
+		mutex_unlock(&ts->lock);
+	}
 	return 0;
 }
 //thp end 6.8
@@ -3599,6 +3625,7 @@ static int nvt_touch_doze_analysis(int input)
 				NVT_ERR("request irq failed. ret=%d\n", ret);
 			} else {
 				nvt_irq_enable(true);
+				nvt_apply_irq_affinity(ts);
 				NVT_LOG("REGISTER_IRQ %d succeed\n",
 					ts->client->irq);
 			}
@@ -4135,6 +4162,7 @@ static int32_t nvt_ts_probe(struct spi_device *client)
 			goto err_int_request_failed;
 		} else {
 			nvt_irq_enable(false);
+			nvt_apply_irq_affinity(ts);
 			NVT_LOG("request irq %d succeed\n", client->irq);
 		}
 	}

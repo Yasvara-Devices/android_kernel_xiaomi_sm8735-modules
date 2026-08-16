@@ -190,11 +190,11 @@ extern const uint16_t gesture_key_array[];
 #endif
 #define BOOT_UPDATE_FIRMWARE 1
 #define BOOT_UPDATE_FIRMWARE_NAME "novatek_ts_fw.bin"
-#define BOOT_UPDATE_FIRMWARE_NAME_CSOT "o10u/novatek_nt38771_o10u_fw_csot.bin"
-#define BOOT_UPDATE_FIRMWARE_NAME_TM "o10u/novatek_nt38771_o10u_fw_tm.bin"
+#define BOOT_UPDATE_FIRMWARE_NAME_CSOT "novatek_nt38771_o10u_fw_csot.bin"
+#define BOOT_UPDATE_FIRMWARE_NAME_TM "novatek_nt38771_o10u_fw_tm.bin"
 #define MP_UPDATE_FIRMWARE_NAME "novatek_ts_mp.bin"
-#define MP_UPDATE_FIRMWARE_NAME_CSOT "o10u/novatek_nt38771_o10u_mp_csot.bin"
-#define MP_UPDATE_FIRMWARE_NAME_TM "o10u/novatek_nt38771_o10u_mp_tm.bin"
+#define MP_UPDATE_FIRMWARE_NAME_CSOT "novatek_nt38771_o10u_mp_csot.bin"
+#define MP_UPDATE_FIRMWARE_NAME_TM "novatek_nt38771_o10u_mp_tm.bin"
 #define NVT36532_DRIVER_VERSION "nvt_version_2025.08.28-001"
 
 //thp start 6.8
@@ -524,6 +524,9 @@ int32_t nvt_write_addr(uint32_t addr, uint8_t data);
 #if NVT_TOUCH_ESD_PROTECT
 extern void nvt_esd_check_enable(uint8_t enable);
 #endif /* #if NVT_TOUCH_ESD_PROTECT */
+#if BOOT_UPDATE_FIRMWARE
+extern struct workqueue_struct *nvt_fwu_wq;
+#endif
 
 int nvt_ic_self_test_short(void);
 int nvt_ic_self_test_open(void);

@@ -897,11 +897,13 @@ static void xiaomi_drm_panel_notifier_callback(
 	case DRM_PANEL_EVENT_UNBLANK:
 #if defined(TOUCH_IS_TDDI)
 		if (notification->notif_data.early_trigger == 0) {
+			resume_skip = false;
 			LOG_INFO("TDDI_FB_BLANK_UNBLAN");
 			schedule_resume_suspend_work((s8)touch_id, true);
 		}
 #else
 		if (notification->notif_data.early_trigger == 1) {
+			resume_skip = false;
 			LOG_INFO("FB_BLANK_UNBLAN");
 			schedule_resume_suspend_work((s8)touch_id, true);
 		}
@@ -983,10 +985,10 @@ static void xiaomi_register_panel_notifier_work(struct work_struct *work)
 
 	if (!panel) {
 		LOG_ERROR("Failed to register panel notifier, try again");
-		if (check_count++ < 5)
+		if (check_count++ < 30)
 			schedule_delayed_work(
 				&xiaomi_touch_data->panel_notifier_register_work,
-				msecs_to_jiffies(5000));
+				msecs_to_jiffies(500));
 		else {
 			LOG_ERROR("Failed to register panel notifier, not try");
 		}
@@ -1077,6 +1079,7 @@ void xiaomi_register_panel_notifier(struct device *dev, s8 touch_id,
 			  xiaomi_register_panel_notifier_work);
 	INIT_WORK(&xiaomi_touch_data->suspend_work, xiaomi_touch_suspend_work);
 	INIT_WORK(&xiaomi_touch_data->resume_work, xiaomi_touch_resume_work);
+	xiaomi_touch_data->is_suspend = true;
 	schedule_delayed_work(&xiaomi_touch_data->panel_notifier_register_work,
 			      msecs_to_jiffies(0));
 #endif
