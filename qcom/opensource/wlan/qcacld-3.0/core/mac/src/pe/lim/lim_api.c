@@ -4113,8 +4113,15 @@ lim_match_link_info(uint8_t req_link_id,
 		    struct mlo_partner_info *partner_info)
 {
 	uint8_t i;
+	uint8_t num_links;
 
-	for (i = 0; i < partner_info->num_partner_links; i++) {
+	if (!partner_info)
+		return false;
+
+	num_links = QDF_MIN(partner_info->num_partner_links,
+			    QDF_ARRAY_SIZE(partner_info->partner_link_info));
+
+	for (i = 0; i < num_links; i++) {
 		if (partner_info->partner_link_info[i].link_id == req_link_id &&
 		    (qdf_is_macaddr_equal(link_addr,
 					  &partner_info->partner_link_info[i].link_addr)))
@@ -4188,6 +4195,7 @@ lim_validate_probe_rsp_link_info(struct pe_session *session_entry,
 	qdf_size_t ml_ie_total_len;
 	struct mlo_partner_info partner_info;
 	uint8_t i;
+	uint8_t num_partner_links;
 	struct mlo_partner_info ml_partner_info;
 
 	status = util_find_mlie(probe_rsp + WLAN_PROBE_RESP_IES_OFFSET,
@@ -4208,7 +4216,9 @@ lim_validate_probe_rsp_link_info(struct pe_session *session_entry,
 	}
 
 	ml_partner_info = session_entry->lim_join_req->partner_info;
-	for (i = 0; i < ml_partner_info.num_partner_links; i++) {
+	num_partner_links = QDF_MIN(ml_partner_info.num_partner_links,
+				    QDF_ARRAY_SIZE(ml_partner_info.partner_link_info));
+	for (i = 0; i < num_partner_links; i++) {
 		if (!lim_match_link_info(ml_partner_info.partner_link_info[i].link_id,
 					 &ml_partner_info.partner_link_info[i].link_addr,
 					 &partner_info)) {

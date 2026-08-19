@@ -9411,6 +9411,7 @@ void lim_extract_ml_info(struct pe_session *session,
 			 tpSirAssocRsp assoc_rsp)
 {
 	uint8_t i, link_id, partner_idx = 0;
+	uint8_t num_links;
 	struct mlo_partner_info *ml_partner_info;
 	struct mlo_link_info *link_info;
 	struct peer_ml_info *ml_link;
@@ -9442,7 +9443,9 @@ void lim_extract_ml_info(struct pe_session *session,
 	if (wlan_vdev_mlme_is_mlo_link_vdev(session->vdev))
 		return;
 
-	for (i = 0; i < ml_partner_info->num_partner_links; i++) {
+	num_links = QDF_MIN(ml_partner_info->num_partner_links,
+			    QDF_ARRAY_SIZE(ml_partner_info->partner_link_info));
+	for (i = 0; i < num_links; i++) {
 		link_id = ml_partner_info->partner_link_info[i].link_id;
 		link_info = mlo_mgr_get_ap_link_by_link_id(
 					session->vdev->mlo_dev_ctx,

@@ -549,7 +549,8 @@ static void lim_copy_ml_partner_info(struct cm_vdev_join_rsp *rsp,
 	partner_info = &pe_session->ml_partner_info;
 	rsp_partner_info = &rsp->connect_rsp.ml_parnter_info;
 
-	rsp_partner_info->num_partner_links = partner_info->num_partner_links;
+	rsp_partner_info->num_partner_links = QDF_MIN(partner_info->num_partner_links,
+						      QDF_ARRAY_SIZE(rsp_partner_info->partner_link_info));
 
 	for (i = 0; i < rsp_partner_info->num_partner_links; i++) {
 		link_id = partner_info->partner_link_info[i].link_id;

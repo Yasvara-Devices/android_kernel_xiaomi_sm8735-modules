@@ -27,7 +27,7 @@ struct wlan_channel;
 
 #define WLAN_MLO_LSWITCH_MAX_HISTORY 5
 #ifndef WLAN_MAX_ML_BSS_LINKS
-#define WLAN_MAX_ML_BSS_LINKS 1
+#define WLAN_MAX_ML_BSS_LINKS 3
 #endif
 
 /**
