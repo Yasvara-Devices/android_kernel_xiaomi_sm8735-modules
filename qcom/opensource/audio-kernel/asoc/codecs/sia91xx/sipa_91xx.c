@@ -11,7 +11,14 @@
  * GNU General Public License for more details.
  */
 
-#define DEBUG
+/*
+ * Upstream defines DEBUG here, which turns every pr_debug() in this driver
+ * into a real printk - CONFIG_DYNAMIC_DEBUG is off, so there is no runtime
+ * switch to gate them. sipa_pm_suspend/resume are #if 0'd no-ops yet still
+ * logged ~414 lines per hour into a 128KB ring buffer. Left off deliberately;
+ * re-enable locally if you are bringing up the amp.
+ */
+/* #define DEBUG */
 // #define HAVE_BACKTRACE_SUPPORT
 #define LOG_FLAG "sipa_91xx"
 
