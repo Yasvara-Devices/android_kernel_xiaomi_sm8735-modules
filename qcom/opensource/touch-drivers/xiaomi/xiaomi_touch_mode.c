@@ -1100,9 +1100,9 @@ int xiaomi_touch_mode(private_data_t *client_private_data, u32 user_size,
 		if (common_data.cmd == SET_CUR_VALUE &&
 		    common_data.mode != THP_BASE_STATUS) {
 			/* print the other log*/
-			LOG_INFO("cmd: %d, mode: %d, data_buf[0]: %d",
-				 common_data.cmd, common_data.mode,
-				 common_data.data_buf[0]);
+			LOG_DEBUG("cmd: %d, mode: %d, data_buf[0]: %d",
+				  common_data.cmd, common_data.mode,
+				  common_data.data_buf[0]);
 		}
 
 		if (common_data.cmd == SET_LONG_VALUE &&

@@ -11,7 +11,7 @@
 #define TOUCH_ID 0
 #define MAX_BUF_SIZE (sizeof(common_data_t))
 
-enum MI_TP_LOG_LEVEL current_log_level = MI_TP_LOG_INFO;
+enum MI_TP_LOG_LEVEL current_log_level = MI_TP_LOG_WARNING;
 EXPORT_SYMBOL_GPL(current_log_level);
 
 typedef struct abnormal_event {
