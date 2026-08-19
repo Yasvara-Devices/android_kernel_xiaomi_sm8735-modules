@@ -270,34 +270,43 @@ void unregister_xiaomi_stylus_input_dev(s8 touch_id)
 }
 EXPORT_SYMBOL_GPL(unregister_xiaomi_stylus_input_dev);
 
-static struct input_dev *report_finger_event(s8 touch_id,
-					     hal_report_piont_t *report_point)
+/*
+ * Which slots currently hold a contact that reached the input core.  This has
+ * to be an unsigned long: __set_bit()/__clear_bit() read-modify-write a full
+ * word, so pointing them at a u16 clobbers the six bytes that follow it.
+ */
+static unsigned long finger_report_point_bitmap[MAX_TOUCH_PANEL_COUNT];
+
+static bool report_finger_event(s8 touch_id, struct input_dev *input_dev,
+				hal_report_piont_t *report_point)
 {
-	static u16 finger_report_point_bitmap = 0;
-	struct input_dev *input_dev = input_devs[touch_id];
-	if (input_dev == NULL) {
-		LOG_INFO("touch id %d input device is empty ,fail to report!",
-			 touch_id);
-		return NULL;
+	unsigned long *slots = &finger_report_point_bitmap[touch_id];
+	int slot = report_point->finger.prop[FINGER_SLOT];
+
+	/* The slot index comes from userspace and indexes the MT slot array. */
+	if (slot < 0 || slot >= MAX_TOUCH_ID) {
+		LOG_ERROR("touch id %d slot %d out of range, drop point",
+			  touch_id, slot);
+		return false;
 	}
+
 	/*
 	 * TouchReport owns raw-frame decoding under THP.  Filter its final point
 	 * stream here so edge/grip protection changes the actual Android input
 	 * event stream rather than only a vendor-HAL bookkeeping value.
 	 */
 	if (xiaomi_touch_filter_should_suppress(
-		    touch_id, report_point->finger.prop[FINGER_SLOT],
+		    touch_id, slot,
 		    report_point->finger.point_action == ACTION_UP,
 		    report_point->finger.x, report_point->finger.y,
 		    input_abs_get_max(input_dev, ABS_MT_POSITION_X),
 		    input_abs_get_max(input_dev, ABS_MT_POSITION_Y)))
-		return NULL;
+		return false;
 
 	if (report_point->finger.point_action != ACTION_UP) {
 		input_report_key(input_dev, BTN_TOUCH, 1);
 		input_report_key(input_dev, BTN_TOOL_FINGER, 1);
-		input_mt_slot(input_dev,
-			      report_point->finger.prop[FINGER_SLOT]);
+		input_mt_slot(input_dev, slot);
 		input_mt_report_slot_state(input_dev, MT_TOOL_FINGER, 1);
 		input_report_abs(input_dev, ABS_MT_POSITION_X,
 				 report_point->finger.x);
@@ -307,31 +316,22 @@ static struct input_dev *report_finger_event(s8 touch_id,
 				 report_point->finger.prop[FINGER_MAJOR]);
 		input_report_abs(input_dev, ABS_MT_TOUCH_MINOR,
 				 report_point->finger.prop[FINGER_MINOR]);
-		__set_bit(report_point->finger.prop[FINGER_SLOT],
-			  (unsigned long *)&finger_report_point_bitmap);
+		__set_bit(slot, slots);
 	} else {
-		input_mt_slot(input_dev,
-			      report_point->finger.prop[FINGER_SLOT]);
+		input_mt_slot(input_dev, slot);
 		input_mt_report_slot_state(input_dev, MT_TOOL_FINGER, 0);
-		__clear_bit(report_point->finger.prop[FINGER_SLOT],
-			    (unsigned long *)&finger_report_point_bitmap);
+		__clear_bit(slot, slots);
 	}
-	if (finger_report_point_bitmap == 0) {
+	if (*slots == 0) {
 		input_report_key(input_dev, BTN_TOUCH, 0);
 		input_report_key(input_dev, BTN_TOOL_FINGER, 0);
 	}
-	return input_dev;
+	return true;
 }
 
-static struct input_dev *report_stylus_event(s8 touch_id,
-					     hal_report_piont_t *report_point)
+static bool report_stylus_event(s8 touch_id, struct input_dev *stylus_input_dev,
+				hal_report_piont_t *report_point)
 {
-	struct input_dev *stylus_input_dev = stylus_input_devs[touch_id];
-	if (stylus_input_dev == NULL) {
-		LOG_INFO("touch id %d input device is empty ,fail to report!",
-			 touch_id);
-		return NULL;
-	}
 	if (report_point->stylus.point_action != ACTION_UP) {
 		input_report_key(stylus_input_dev, BTN_TOUCH, 1);
 		input_report_key(stylus_input_dev, BTN_TOOL_PEN, 1);
@@ -357,8 +357,11 @@ static struct input_dev *report_stylus_event(s8 touch_id,
 		input_report_key(stylus_input_dev, BTN_TOUCH, 0);
 		input_report_key(stylus_input_dev, BTN_TOOL_PEN, 0);
 	}
-	return stylus_input_dev;
+	return true;
 }
+
+/* The shared point buffer is a single page, whatever event_count claims. */
+#define MAX_REPORT_POINT_COUNT (PAGE_SIZE / sizeof(hal_report_piont_t))
 
 int report_touch_event(s8 touch_id, u8 event_count)
 {
@@ -366,6 +369,8 @@ int report_touch_event(s8 touch_id, u8 event_count)
 	struct input_dev *stylus_input_dev = NULL;
 	hal_report_piont_t *event =
 		(hal_report_piont_t *)report_point_mmap_base;
+	bool finger_reported = false;
+	bool stylus_reported = false;
 	int index = 0;
 
 	if (IS_TOUCH_ID_INVALID(touch_id)) {
@@ -376,27 +381,55 @@ int report_touch_event(s8 touch_id, u8 event_count)
 		LOG_ERROR("event memory is NULL");
 		return -1;
 	}
+	/* event_count is the raw ioctl argument, so bound it before indexing. */
+	if (event_count > MAX_REPORT_POINT_COUNT) {
+		LOG_ERROR("event count %u exceeds %zu point slots, clamp it",
+			  event_count, (size_t)MAX_REPORT_POINT_COUNT);
+		event_count = MAX_REPORT_POINT_COUNT;
+	}
+
+	input_dev = input_devs[touch_id];
+	stylus_input_dev = stylus_input_devs[touch_id];
+
 	mutex_lock(&ts_report_mutex[touch_id]);
 
+	/*
+	 * No cond_resched() in this loop: it is bounded by the page above, and
+	 * yielding between the input_report_*() calls and the input_sync()
+	 * below leaves a half-built frame visible to nobody while the batch
+	 * sits unsynced.
+	 */
 	for (index = 0; index < event_count; index++) {
 		if (event[index].input_style == INPUT_STYLE_FINGER) {
-			input_dev =
-				report_finger_event(touch_id, &event[index]);
+			if (input_dev == NULL) {
+				LOG_INFO("touch id %d input device is empty ,fail to report!",
+					 touch_id);
+				continue;
+			}
+			finger_reported |= report_finger_event(
+				touch_id, input_dev, &event[index]);
 		} else if (event[index].input_style == INPUT_STYLE_STYLUS) {
-			stylus_input_dev =
-				report_stylus_event(touch_id, &event[index]);
+			if (stylus_input_dev == NULL) {
+				LOG_INFO("touch id %d stylus input device is empty ,fail to report!",
+					 touch_id);
+				continue;
+			}
+			stylus_reported |= report_stylus_event(
+				touch_id, stylus_input_dev, &event[index]);
 		} else {
 			LOG_ERROR("input style %d is invalid",
 				  event[index].input_style);
 		}
-		cond_resched();
 	}
-	if (input_dev != NULL) {
+	/*
+	 * Sync whenever anything reached the input core.  Deriving this from
+	 * the last loop iteration instead would strand a whole batch in the
+	 * input core's buffer any time its final point was filtered out.
+	 */
+	if (finger_reported)
 		input_sync(input_dev);
-	}
-	if (stylus_input_dev != NULL) {
+	if (stylus_reported)
 		input_sync(stylus_input_dev);
-	}
 	mutex_unlock(&ts_report_mutex[touch_id]);
 	return 0;
 }
