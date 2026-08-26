@@ -72,6 +72,7 @@ extern ssize_t mi_dsi_panel_lockdown_info_read(unsigned char *plockdowninfo);
 static int32_t nvt_ts_suspend(struct device *dev);
 static int32_t nvt_ts_resume(struct device *dev);
 static int32_t nvt_ts_resume_suspend(bool is_resume, u8 gesture_type);
+static int32_t nvt_ts_gesture_rearm(void);
 extern void dsi_panel_gesture_enable(bool on);
 
 // for ic_self_test
@@ -3310,11 +3311,7 @@ static void nvt_set_cur_value(int mode, int *value)
 	}
 
 	if (nvt_mode == THP_FOD_DOWNUP_CTL && ts && nvt_value >= 0) {
-		if (nvt_value && !bTouchIsAwake) {
-			NVT_LOG("THP FOD down ignored (screen off)\n");
-			return;
-		}
-		NVT_LOG("THP FOD %s", nvt_value ? "down" : "up");
+		NVT_LOG("THP FOD %s (awake=%d)", nvt_value ? "down" : "up", bTouchIsAwake);
 		input_report_key(ts->input_dev, BTN_INFO, !!nvt_value);
 		input_sync(ts->input_dev);
 		update_fod_press_status(!!nvt_value);
@@ -4355,6 +4352,7 @@ static int32_t nvt_ts_probe(struct spi_device *client)
 	hardware_operation.ic_get_fw_version = nvt_ic_get_fw_version;
 	hardware_operation.ic_switch_mode = nvt_ic_switch_mode;
 	hardware_operation.set_mode_value = nvt_set_cur_value;
+	hardware_operation.ic_gesture_rearm = nvt_ts_gesture_rearm;
 	hardware_operation.set_mode_long_value = NULL;
 	hardware_operation.palm_sensor_write = NULL;
 	hardware_operation.cmd_update_func = nvt_cmd_mode_update;
@@ -4639,6 +4637,20 @@ static int32_t nvt_ts_resume_suspend(bool is_resume, u8 gesture_type)
 	result = is_resume ? nvt_ts_resume(&ts->client->dev) :
 			     nvt_ts_suspend(&ts->client->dev);
 	return result;
+}
+
+static int32_t nvt_ts_gesture_rearm(void)
+{
+	int ret;
+
+	if (!ts || bTouchIsAwake)
+		return -EINVAL;
+
+	ret = nvt_ts_resume(&ts->client->dev);
+	if (ret)
+		return ret;
+
+	return nvt_ts_suspend(&ts->client->dev);
 }
 
 /*******************************************************

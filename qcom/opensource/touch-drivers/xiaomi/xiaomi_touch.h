@@ -266,6 +266,8 @@ typedef struct xiaomi_touch_data {
 	bool is_suspend;
 	struct work_struct suspend_work;
 	struct work_struct resume_work;
+	struct delayed_work gesture_rearm_work;
+	u8 gesture_rearm_retry;
 	struct delayed_work panel_notifier_register_work;
 	struct device *dev;
 	void *notifier_cookie;
@@ -311,6 +313,7 @@ typedef struct hardware_operation {
 	int (*htc_ic_getModeValue)(common_data_t *common_data);
 
 	int (*ic_resume_suspend)(bool is_resume, u8 gesture_type);
+	int (*ic_gesture_rearm)(void);
 	void (*ic_set_charge_state)(int status);
 	void (*ic_set_fod_value)(s32 value[], int length);
 #ifdef TOUCH_FOD_SUPPORT
