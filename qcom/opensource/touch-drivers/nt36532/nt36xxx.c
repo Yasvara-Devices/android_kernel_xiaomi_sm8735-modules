@@ -1895,7 +1895,12 @@ void nvt_ts_wakeup_gesture_report(uint8_t gesture_id, uint8_t *data)
 	case GESTURE_DOUBLE_CLICK:
 		NVT_LOG("Gesture : Double Click.\n");
 		if (ts->gesture_command & 0x01) {
-			keycode = gesture_key_array[3];
+			if (xiaomi_gesture_sensors_active()) {
+				keycode = 0;
+				notify_gesture_double_tap();
+			} else {
+				keycode = gesture_key_array[3];
+			}
 		} else {
 			NVT_LOG("Gesture : Double Click Not Enable.\n");
 			keycode = 0;
@@ -1940,7 +1945,12 @@ void nvt_ts_wakeup_gesture_report(uint8_t gesture_id, uint8_t *data)
 	case GESTURE_SINGLE_CLICK:
 		NVT_LOG("Gesture : Finger Single Click.\n");
 		if (ts->gesture_command & GESTURE_CMD_SINGLE_TAP) {
-			keycode = gesture_key_array[13];
+			if (xiaomi_gesture_sensors_active()) {
+				keycode = 0;
+				notify_gesture_single_tap();
+			} else {
+				keycode = gesture_key_array[13];
+			}
 		} else {
 			NVT_LOG("Gesture : Finger Single Click Not Enable.\n");
 			keycode = 0;
@@ -3074,24 +3084,26 @@ static void nvt_set_gesture_mode(int value)
 	}
 
 	if (ts->ic_state <= NVT_IC_RESUME_IN && ts->ic_state != NVT_IC_INIT) {
-		if ((value & GESTURE_CMD_FOD) !=
-		    (ts->gesture_command & GESTURE_CMD_FOD)) {
+		if (value != ts->gesture_command) {
+			NVT_LOG("Screen off, applying gesture flags(%02x), ic state is %d",
+				value, ts->ic_state);
 			mutex_lock(&ts->lock);
-			if (value & GESTURE_CMD_FOD) {
+			if (!(ts->gesture_command & GESTURE_CMD_FOD) &&
+			    (value & GESTURE_CMD_FOD)) {
 				nvt_irq_enable(true);
 				nvt_xm_htc_set_fod_enable(1);
-				ts->gesture_command |= GESTURE_CMD_FOD;
 				ts->gesture_state = true;
-				dsi_panel_gesture_enable(true);
-			} else {
+			} else if ((ts->gesture_command & GESTURE_CMD_FOD) &&
+				   !(value & GESTURE_CMD_FOD)) {
 				nvt_xm_htc_set_fod_enable(0);
-				ts->gesture_command &= ~GESTURE_CMD_FOD;
 			}
+			ts->gesture_command = value;
+			nvt_xm_htc_set_gesture_switch(ts->gesture_command &
+						      0xFFFF);
+			dsi_panel_gesture_enable(true);
 			mutex_unlock(&ts->lock);
 		}
 		ts->gesture_command_delayed = value;
-		NVT_LOG("Screen off, don't set gesture flag(%02x), ic state is %d",
-			value, ts->ic_state);
 	} else if (ts->ic_state >= NVT_IC_RESUME_OUT) {
 		NVT_LOG("Screen on, set gesture flag(%02x), ic state is %d",
 			value, ts->ic_state);
