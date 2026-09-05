@@ -23,7 +23,10 @@ KBUILD_OPTIONS += CONFIG_CNSS_GENL=m
 KBUILD_OPTIONS += CONFIG_CNSS_PLAT_IPC_QMI_SVC=m
 else ifeq ($(USE_EXTERNAL_CONFIGS),)
 KBUILD_OPTIONS += CONFIG_CNSS_OUT_OF_TREE=y
-KBUILD_OPTIONS += CONFIG_CNSS2=m
+# CONFIG_CNSS2 force-line removed 2026-08-22: external/PCIe WLAN platform
+# driver, zero consumers on tuna (integrated path = icnss2; qca_cld3 deps
+# verified cnss2-free). Re-carry on CLO re-sync if ever re-enabled.
+# KBUILD_OPTIONS += CONFIG_CNSS2=m
 KBUILD_OPTIONS += CONFIG_ICNSS2=m
 KBUILD_OPTIONS += CONFIG_CNSS2_QMI=y
 KBUILD_OPTIONS += CONFIG_ICNSS2_QMI=y
