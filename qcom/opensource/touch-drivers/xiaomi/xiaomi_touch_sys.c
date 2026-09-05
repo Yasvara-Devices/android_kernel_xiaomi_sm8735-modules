@@ -36,8 +36,27 @@ static DEFINE_MUTEX(abnormal_event_mutex);
 static DEFINE_MUTEX(palm_mutex);
 static DEFINE_MUTEX(gesture_state_notify_mutex);
 
-static bool gesture_double_tap_consumer;
-static bool gesture_single_tap_consumer;
+/*
+ * Wake gesture arming.
+ *
+ * Two userspace front-ends can arm the same panel gesture, and they want the
+ * event reported differently:
+ *
+ *   gesture_*_tap_enabled  - the LineageOS gesture sub-HAL. Wants a
+ *                            sysfs_notify on the matching _state node so it
+ *                            can turn the tap into a doze pulse.
+ *   single_tap_to_wake     - native single tap to wake. Wants the panel to
+ *                            report KEY_WAKEUP so PowerManagerService performs
+ *                            a real wake, with no userspace in the path.
+ *
+ * These are tracked per gesture and cleared on disable. A single sticky "some
+ * sensor exists" flag cannot express this: arming the single tap sensor would
+ * also mute the double tap keycode, silently breaking native DT2W for the rest
+ * of the boot.
+ */
+static bool double_tap_sensor_armed;
+static bool single_tap_sensor_armed;
+static bool single_tap_wake_armed;
 
 static DEFINE_MUTEX(thp_ic_mutex);
 static DEFINE_MUTEX(thp_ic_read_data_mutex);
@@ -186,11 +205,41 @@ int notify_gesture_single_tap(void)
 }
 EXPORT_SYMBOL_GPL(notify_gesture_single_tap);
 
-bool xiaomi_gesture_sensors_active(void)
+bool xiaomi_double_tap_wants_sensor(void)
 {
-	return gesture_double_tap_consumer || gesture_single_tap_consumer;
+	return double_tap_sensor_armed;
 }
-EXPORT_SYMBOL_GPL(xiaomi_gesture_sensors_active);
+EXPORT_SYMBOL_GPL(xiaomi_double_tap_wants_sensor);
+
+/*
+ * Native wake wins over the doze sensor: if the user asked for single tap to
+ * wake, a tap must light the screen even when something also left the doze tap
+ * sensor armed. Reporting KEY_WAKEUP still lets the doze stack observe the
+ * wake, whereas a sysfs_notify alone would only ever produce a pulse.
+ */
+bool xiaomi_single_tap_wants_sensor(void)
+{
+	return single_tap_sensor_armed && !single_tap_wake_armed;
+}
+EXPORT_SYMBOL_GPL(xiaomi_single_tap_wants_sensor);
+
+/*
+ * Both single tap front-ends arm the same panel gesture bit, so the mode value
+ * is the union of the two. Recomputed on every change instead of being written
+ * directly by each store handler, so disabling one front-end cannot disarm a
+ * gesture the other one still wants.
+ */
+static void apply_single_tap_arming(void)
+{
+	int mode_arr[Touch_Mode_NUM] = { 0 };
+	int want = single_tap_sensor_armed || single_tap_wake_armed;
+
+	if (driver_get_touch_mode(TOUCH_ID, Touch_Aod_Enable) == want)
+		return;
+
+	mode_arr[Touch_Aod_Enable] = want;
+	driver_update_touch_mode(TOUCH_ID, mode_arr, 1L << Touch_Aod_Enable);
+}
 
 int update_palm_sensor_value(int value)
 {
@@ -267,7 +316,7 @@ CREATE_ATTR(
 		if (sscanf(buf, "%d", &input) < 0 || input > 1)
 			return -EINVAL;
 
-		gesture_double_tap_consumer = true;
+		double_tap_sensor_armed = !!input;
 
 		if (driver_get_touch_mode(TOUCH_ID,
 					  Touch_Doubletap_Mode) != input)
@@ -287,32 +336,81 @@ CREATE_ATTR(gesture_double_tap_state,
 CREATE_ATTR(
 	gesture_single_tap_enabled,
 	{
+		/*
+		 * Report this front-end's own request, not Touch_Aod_Enable,
+		 * which is the union with single_tap_to_wake.
+		 */
 		return snprintf(buf, PAGE_SIZE, "%d\n",
-				driver_get_touch_mode(TOUCH_ID,
-						      Touch_Aod_Enable));
+				single_tap_sensor_armed);
 	},
 	{
 		unsigned int input;
-		int mode_arr[Touch_Mode_NUM] = { 0 };
 
 		if (sscanf(buf, "%d", &input) < 0 || input > 1)
 			return -EINVAL;
 
-		gesture_single_tap_consumer = true;
-
-		if (driver_get_touch_mode(TOUCH_ID, Touch_Aod_Enable) != input)
+		if (single_tap_sensor_armed != !!input)
 			sysfs_notify(&xiaomi_touch_dev->kobj, NULL,
 				     "gesture_single_tap_enabled");
 
-		mode_arr[Touch_Aod_Enable] = input;
-		driver_update_touch_mode(TOUCH_ID, mode_arr,
-					 1L << Touch_Aod_Enable);
+		single_tap_sensor_armed = !!input;
+		apply_single_tap_arming();
 		return count;
 	});
 
 CREATE_ATTR(gesture_single_tap_state,
 	    { return snprintf(buf, PAGE_SIZE, "%d\n", 1); },
 	    { return count; });
+
+/*
+ * Native single tap to wake. Arms the same panel gesture as the doze tap
+ * sensor, but leaves single_tap_sensor_armed clear so nvt_ts_wakeup_gesture_
+ * report() emits KEY_WAKEUP instead of a sysfs_notify. That keeps the wake on
+ * the same path the power key uses - kernel input -> PowerManagerService -
+ * with no sensor HAL, sensorservice or SystemUI doze hop to wake up first.
+ */
+CREATE_ATTR(
+	single_tap_to_wake,
+	{ return snprintf(buf, PAGE_SIZE, "%d\n", single_tap_wake_armed); },
+	{
+		unsigned int input;
+
+		if (sscanf(buf, "%d", &input) < 0 || input > 1)
+			return -EINVAL;
+
+		single_tap_wake_armed = !!input;
+		apply_single_tap_arming();
+		return count;
+	});
+
+/*
+ * Pocket gating. xiaomi_get_gesture_type() drops every tap gesture while this
+ * is non-zero, so the panel stops gesture scanning entirely instead of hunting
+ * for taps against a trouser leg. Value 1 keeps the FOD longpress gesture
+ * alive; 2 additionally disables it.
+ */
+CREATE_ATTR(
+	touch_nonui_mode,
+	{
+		return snprintf(buf, PAGE_SIZE, "%d\n",
+				driver_get_touch_mode(TOUCH_ID,
+						      Touch_Nonui_Mode));
+	},
+	{
+		unsigned int input;
+		int mode_arr[Touch_Mode_NUM] = { 0 };
+
+		if (sscanf(buf, "%d", &input) < 0 || input > 2)
+			return -EINVAL;
+
+		if (driver_get_touch_mode(TOUCH_ID, Touch_Nonui_Mode) == input)
+			return count;
+
+		mode_arr[Touch_Nonui_Mode] = input;
+		driver_update_touch_mode(TOUCH_ID, mode_arr,
+					 1L << Touch_Nonui_Mode);
+		return count;
+	});
 
 CREATE_ATTR(
 	panel_vendor,
@@ -907,6 +1005,8 @@ static struct attribute *touch_attr_group[] = {
 	&dev_attr_gesture_double_tap_state.attr,
 	&dev_attr_gesture_single_tap_enabled.attr,
 	&dev_attr_gesture_single_tap_state.attr,
+	&dev_attr_single_tap_to_wake.attr,
+	&dev_attr_touch_nonui_mode.attr,
 	&dev_attr_panel_vendor.attr,
 	&dev_attr_panel_color.attr,
 	&dev_attr_panel_display.attr,

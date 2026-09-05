@@ -266,8 +266,6 @@ typedef struct xiaomi_touch_data {
 	bool is_suspend;
 	struct work_struct suspend_work;
 	struct work_struct resume_work;
-	struct delayed_work gesture_rearm_work;
-	u8 gesture_rearm_retry;
 	struct delayed_work panel_notifier_register_work;
 	struct device *dev;
 	void *notifier_cookie;
@@ -383,7 +381,8 @@ int update_fod_press_status(int value);
 #endif
 int notify_gesture_double_tap(void);
 int notify_gesture_single_tap(void);
-bool xiaomi_gesture_sensors_active(void);
+bool xiaomi_double_tap_wants_sensor(void);
+bool xiaomi_single_tap_wants_sensor(void);
 
 struct class *get_xiaomi_touch_class(void);
 int update_palm_sensor_value(int value);

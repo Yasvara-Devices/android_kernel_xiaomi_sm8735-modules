@@ -697,35 +697,6 @@ void unregister_touch_panel(s8 touch_id)
 EXPORT_SYMBOL_GPL(unregister_touch_panel);
 
 #if defined(CONFIG_DRM)
-static void xiaomi_touch_gesture_rearm_work(struct work_struct *work)
-{
-	xiaomi_touch_data_t *xiaomi_touch_data =
-		container_of(work, xiaomi_touch_data_t, gesture_rearm_work.work);
-	xiaomi_touch_driver_param_t *xiaomi_touch_driver_param =
-		get_xiaomi_touch_driver_param(xiaomi_touch_data->touch_id);
-	int ret;
-
-	if (!xiaomi_touch_data->is_suspend)
-		return;
-
-	if (!xiaomi_touch_driver_param ||
-	    !xiaomi_touch_driver_param->hardware_operation.ic_gesture_rearm)
-		return;
-
-	ret = xiaomi_touch_driver_param->hardware_operation.ic_gesture_rearm();
-	LOG_INFO("touch id %d gesture re-arm ret %d retry %d",
-		 xiaomi_touch_data->touch_id, ret,
-		 xiaomi_touch_data->gesture_rearm_retry);
-	if (ret && xiaomi_touch_data->gesture_rearm_retry < 2) {
-		xiaomi_touch_data->gesture_rearm_retry++;
-		queue_delayed_work(xiaomi_touch_data->event_wq,
-				   &xiaomi_touch_data->gesture_rearm_work,
-				   msecs_to_jiffies(500));
-	} else {
-		xiaomi_touch_data->gesture_rearm_retry = 0;
-	}
-}
-
 static void xiaomi_touch_resume_work(struct work_struct *work)
 {
 	xiaomi_touch_data_t *xiaomi_touch_data =
@@ -834,13 +805,13 @@ static void xiaomi_touch_suspend_tddi(s8 touch_id)
 	if (!xiaomi_touch_data || !xiaomi_touch_driver_param)
 		return;
 	if (xiaomi_touch_data->is_suspend) {
-		LOG_INFO("touch id %d already suspend, re-arm gesture mode",
-			 touch_id);
-		cancel_delayed_work(&xiaomi_touch_data->gesture_rearm_work);
-		xiaomi_touch_data->gesture_rearm_retry = 0;
-		queue_delayed_work(xiaomi_touch_data->event_wq,
-				   &xiaomi_touch_data->gesture_rearm_work,
-				   msecs_to_jiffies(100));
+		/*
+		 * Nothing to do, and nothing may talk to the IC here: this runs
+		 * from the early notifier phase of a blank, where the rail is
+		 * already on its way down. Re-arming belongs on the LP late
+		 * phase instead, once the panel is powered again.
+		 */
+		LOG_INFO("touch id %d already suspend, skip", touch_id);
 		return;
 	}
 	XIAOMI_TOUCH_UTC_PRINT("");
@@ -934,7 +905,6 @@ static void xiaomi_drm_panel_notifier_callback(
 		if (notification->notif_data.early_trigger == 0) {
 			resume_skip = false;
 			LOG_INFO("TDDI_FB_BLANK_UNBLAN");
-			cancel_delayed_work(&xiaomi_touch_data->gesture_rearm_work);
 			schedule_resume_suspend_work((s8)touch_id, true);
 		}
 #else
@@ -953,8 +923,8 @@ static void xiaomi_drm_panel_notifier_callback(
 			LOG_INFO("TDDI_FB_BLANK %s",
 				 notification->notif_type ==
 						 DRM_PANEL_EVENT_BLANK_LP ?
-					 "POWER DOWN" :
-					 "LP");
+					 "LP" :
+					 "POWER DOWN");
 			resume_skip = true;
 			LOG_INFO("resume skip = %d", resume_skip);
 			xiaomi_touch_suspend_tddi((s8)touch_id);
@@ -964,13 +934,29 @@ static void xiaomi_drm_panel_notifier_callback(
 				    .display_suspend_ready)
 				xiaomi_touch_driver_param->hardware_operation
 					.display_suspend_ready();
-			if (xiaomi_touch_data->is_suspend) {
-				cancel_delayed_work(
-					&xiaomi_touch_data->gesture_rearm_work);
-				queue_delayed_work(
-					xiaomi_touch_data->event_wq,
-					&xiaomi_touch_data->gesture_rearm_work,
-					msecs_to_jiffies(600));
+			/*
+			 * Late phase of an LP entry: the panel has just powered
+			 * back up into low power for an AOD peek. On this TDDI
+			 * part that power cycle resets the touch controller and
+			 * clears its firmware, so every wake gesture armed
+			 * before the blank is gone and the IC stops raising its
+			 * interrupt. This is the only moment it is both broken
+			 * and reachable, so re-initialise it here.
+			 *
+			 * Deliberately not done for DRM_PANEL_EVENT_BLANK: that
+			 * rail is going away, and touching the IC there wedges
+			 * it until the next full resume.
+			 */
+			if (notification->notif_type ==
+				    DRM_PANEL_EVENT_BLANK_LP &&
+			    xiaomi_touch_data->is_suspend &&
+			    xiaomi_touch_driver_param->hardware_operation
+				    .ic_gesture_rearm) {
+				int ret = xiaomi_touch_driver_param
+						  ->hardware_operation
+						  .ic_gesture_rearm();
+				LOG_INFO("touch id %d gesture re-arm after LP ret %d",
+					 (int)touch_id, ret);
 			}
 		}
 #else
@@ -1121,8 +1107,6 @@ void xiaomi_register_panel_notifier(struct device *dev, s8 touch_id,
 		panel_event_notifier_client;
 	INIT_DELAYED_WORK(&xiaomi_touch_data->panel_notifier_register_work,
 			  xiaomi_register_panel_notifier_work);
-	INIT_DELAYED_WORK(&xiaomi_touch_data->gesture_rearm_work,
-			  xiaomi_touch_gesture_rearm_work);
 	INIT_WORK(&xiaomi_touch_data->suspend_work, xiaomi_touch_suspend_work);
 	INIT_WORK(&xiaomi_touch_data->resume_work, xiaomi_touch_resume_work);
 	xiaomi_touch_data->is_suspend = true;
