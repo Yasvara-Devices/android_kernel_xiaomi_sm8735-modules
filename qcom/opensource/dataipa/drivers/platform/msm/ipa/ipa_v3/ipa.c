@@ -7681,11 +7681,18 @@ static void ipa3_register_panic_hdlr(void)
 		&ipa3_panic_blk);
 }
 
+#if IS_ENABLED(CONFIG_DEEPSLEEP) || IS_ENABLED(CONFIG_HIBERNATION)
+/*
+ * Sole caller lives in the hibernation/deepsleep cleanup path below; guard
+ * the definition with the same condition or -Wunused-function breaks -Werror
+ * builds when CONFIG_HIBERNATION is disabled.
+ */
 static void ipa3_unregister_panic_hdlr(void)
 {
 	atomic_notifier_chain_unregister(&panic_notifier_list,
 		&ipa3_panic_blk);
 }
+#endif
 
 static void ipa3_uc_is_loaded(void)
 {
