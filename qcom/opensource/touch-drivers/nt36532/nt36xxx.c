@@ -95,7 +95,7 @@ extern void nvt_change_mode(uint8_t mode);
 struct nvt_ts_data *ts;
 
 #if BOOT_UPDATE_FIRMWARE
-struct workqueue_struct *nvt_fwu_wq;
+static struct workqueue_struct *nvt_fwu_wq;
 extern void Boot_Update_Firmware(struct work_struct *work);
 #endif
 
@@ -1894,12 +1894,7 @@ void nvt_ts_wakeup_gesture_report(uint8_t gesture_id, uint8_t *data)
 	case GESTURE_DOUBLE_CLICK:
 		NVT_LOG("Gesture : Double Click.\n");
 		if (ts->gesture_command & 0x01) {
-			if (xiaomi_double_tap_wants_sensor()) {
-				keycode = 0;
-				notify_gesture_double_tap();
-			} else {
-				keycode = gesture_key_array[3];
-			}
+			keycode = gesture_key_array[3];
 		} else {
 			NVT_LOG("Gesture : Double Click Not Enable.\n");
 			keycode = 0;
@@ -1944,12 +1939,7 @@ void nvt_ts_wakeup_gesture_report(uint8_t gesture_id, uint8_t *data)
 	case GESTURE_SINGLE_CLICK:
 		NVT_LOG("Gesture : Finger Single Click.\n");
 		if (ts->gesture_command & GESTURE_CMD_SINGLE_TAP) {
-			if (xiaomi_single_tap_wants_sensor()) {
-				keycode = 0;
-				notify_gesture_single_tap();
-			} else {
-				keycode = gesture_key_array[13];
-			}
+			keycode = gesture_key_array[13];
 		} else {
 			NVT_LOG("Gesture : Finger Single Click Not Enable.\n");
 			keycode = 0;
@@ -2023,38 +2013,6 @@ static void nvt_parse_irq_cpus(struct device *dev, struct nvt_ts_data *t)
 	t->irq_affinity_valid = !cpumask_empty(&t->irq_affinity);
 	NVT_LOG("irq thread cpumask=%*pbl valid=%d\n",
 		cpumask_pr_args(&t->irq_affinity), t->irq_affinity_valid);
-}
-
-/*******************************************************
-Description:
-	Point the hard irq at the same cpus as the threaded
-	handler, so a frame does not cross clusters.
-
-return:
-	n.a.
-*******************************************************/
-static void nvt_apply_irq_affinity(struct nvt_ts_data *t)
-{
-	int32_t ret;
-
-	if (!t->irq_affinity_valid || !t->client->irq)
-		return;
-
-	/*
-	 * The threaded handler picks up novatek,irq-thread-cpus itself on its
-	 * first run, but the top half keeps following
-	 * /proc/irq/default_smp_affinity, which is the little cluster here.
-	 * Leaving the two halves split costs a cross-cluster wakeup on every
-	 * frame, so aim the hard irq at the same mask.  This has to be redone
-	 * after each request_threaded_irq(), which resets affinity.
-	 */
-	ret = irq_set_affinity(t->client->irq, &t->irq_affinity);
-	if (ret)
-		NVT_ERR("set irq %d affinity to %*pbl failed. ret=%d\n",
-			t->client->irq, cpumask_pr_args(&t->irq_affinity), ret);
-	else
-		NVT_LOG("irq %d affinity=%*pbl\n", t->client->irq,
-			cpumask_pr_args(&t->irq_affinity));
 }
 
 #ifdef CONFIG_OF
@@ -2937,14 +2895,20 @@ static int32_t nvt_ts_check_chip_ver_trim_loop(void)
 //thp start 6.8
 int nvt_enable_touch_raw(int en)
 {
-	ts->enable_touch_raw = !!en;
+	// if (en) {
+	//cleanUp(0);
+	ts->enable_touch_raw = true;
 	add_common_data_to_buf(0, SET_CUR_VALUE, THP_HAL_CHARGING_STATUS, 1,
 			       &ts->is_usb_exist);
-	if (en) {
-		mutex_lock(&ts->lock);
-		nvt_update_firmware(BOOT_UPDATE_FIRMWARE_NAME);
-		mutex_unlock(&ts->lock);
-	}
+	// } else {
+	// 	//cleanUp(1);
+	// 	ts->enable_touch_raw = false;
+	// }
+	// ts->need_update_firmware = true;
+	// nvt_match_fw();
+	mutex_lock(&ts->lock);
+	nvt_update_firmware(BOOT_UPDATE_FIRMWARE_NAME);
+	mutex_unlock(&ts->lock);
 	return 0;
 }
 //thp end 6.8
@@ -3083,15 +3047,6 @@ static void nvt_set_gesture_mode(int value)
 	}
 
 	if (ts->ic_state <= NVT_IC_RESUME_IN && ts->ic_state != NVT_IC_INIT) {
-		/*
-		 * The IC is suspended: nvt_set_extend_custom_cmd() is rejected
-		 * here (send cmd failed, buf[1] = 0xFE), so the gesture switch
-		 * must not be pushed now. Stash it instead - resume replays it
-		 * through gesture_command_delayed, and the following suspend
-		 * hands it to the IC from nvt_enable_gesture_mode() while it is
-		 * still powered. FOD is the exception: its enable goes through a
-		 * different command that does work against a suspended IC.
-		 */
 		if ((value & GESTURE_CMD_FOD) !=
 		    (ts->gesture_command & GESTURE_CMD_FOD)) {
 			mutex_lock(&ts->lock);
@@ -3108,7 +3063,7 @@ static void nvt_set_gesture_mode(int value)
 			mutex_unlock(&ts->lock);
 		}
 		ts->gesture_command_delayed = value;
-		NVT_LOG("Screen off, defer gesture flag(%02x), ic state is %d",
+		NVT_LOG("Screen off, don't set gesture flag(%02x), ic state is %d",
 			value, ts->ic_state);
 	} else if (ts->ic_state >= NVT_IC_RESUME_OUT) {
 		NVT_LOG("Screen on, set gesture flag(%02x), ic state is %d",
@@ -3116,58 +3071,6 @@ static void nvt_set_gesture_mode(int value)
 		ts->gesture_command = value;
 		dsi_panel_gesture_enable(!!ts->gesture_command);
 	}
-}
-
-/*
- * Re-push the wakeup gesture configuration to the IC without resuming it.
- *
- * AOD peek flips the panel between LP and a real power down with no UNBLANK in
- * between, so xiaomi_touch_suspend_tddi() sees is_suspend already set and skips
- * the normal suspend path - while each power down still wipes the IC's gesture
- * configuration. This runs from the early notifier phase, before the panel
- * drops, so the IC still has power to accept the command.
- *
- * It deliberately does not resume the IC. Resuming against a down rail wedges
- * the controller: nvt_check_fw_reset_state() fails, every later command returns
- * 0xFE, and double tap, single tap and FOD all die together.
- */
-/*
- * Re-initialise the controller after an AOD peek.
- *
- * Entering LP powers the panel back up, and because this is a TDDI part that
- * resets the touch controller and clears its firmware SRAM. Everything armed
- * during the preceding suspend is gone: the IC answers 0xBF (freshly reset,
- * running bootloader) and stops raising its interrupt entirely, so no wake
- * gesture fires. Only a full firmware reload brings it back, which means a
- * real resume followed by a suspend to re-enter gesture mode.
- *
- * This must only ever run from the LP notifier's late phase, where the panel
- * is already powered. Doing it against a rail that is on its way down is what
- * wedged the IC before: nvt_check_fw_reset_state() fails, every later command
- * returns 0xFE, and double tap, single tap and FOD all die together.
- */
-static int32_t nvt_ts_gesture_rearm(void)
-{
-	int32_t ret;
-
-	if (!ts || bTouchIsAwake)
-		return -EINVAL;
-
-	ret = nvt_ts_resume(&ts->client->dev);
-	if (ret) {
-		NVT_ERR("gesture re-arm: resume failed (%d), leaving IC alone\n",
-			ret);
-		return ret;
-	}
-
-	ret = nvt_ts_suspend(&ts->client->dev);
-	if (ret)
-		NVT_ERR("gesture re-arm: suspend failed (%d)\n", ret);
-	else
-		NVT_LOG("gesture re-armed after panel power cycle, cmd=0x%02x\n",
-			ts->gesture_command);
-
-	return ret;
 }
 
 static int nvt_enable_gesture_mode(int value)
@@ -3381,7 +3284,11 @@ static void nvt_set_cur_value(int mode, int *value)
 	}
 
 	if (nvt_mode == THP_FOD_DOWNUP_CTL && ts && nvt_value >= 0) {
-		NVT_LOG("THP FOD %s (awake=%d)", nvt_value ? "down" : "up", bTouchIsAwake);
+		if (nvt_value && !bTouchIsAwake) {
+			NVT_LOG("THP FOD down ignored (screen off)\n");
+			return;
+		}
+		NVT_LOG("THP FOD %s", nvt_value ? "down" : "up");
 		input_report_key(ts->input_dev, BTN_INFO, !!nvt_value);
 		input_sync(ts->input_dev);
 		update_fod_press_status(!!nvt_value);
@@ -3692,7 +3599,6 @@ static int nvt_touch_doze_analysis(int input)
 				NVT_ERR("request irq failed. ret=%d\n", ret);
 			} else {
 				nvt_irq_enable(true);
-				nvt_apply_irq_affinity(ts);
 				NVT_LOG("REGISTER_IRQ %d succeed\n",
 					ts->client->irq);
 			}
@@ -4229,7 +4135,6 @@ static int32_t nvt_ts_probe(struct spi_device *client)
 			goto err_int_request_failed;
 		} else {
 			nvt_irq_enable(false);
-			nvt_apply_irq_affinity(ts);
 			NVT_LOG("request irq %d succeed\n", client->irq);
 		}
 	}
@@ -4422,7 +4327,6 @@ static int32_t nvt_ts_probe(struct spi_device *client)
 	hardware_operation.ic_get_fw_version = nvt_ic_get_fw_version;
 	hardware_operation.ic_switch_mode = nvt_ic_switch_mode;
 	hardware_operation.set_mode_value = nvt_set_cur_value;
-	hardware_operation.ic_gesture_rearm = nvt_ts_gesture_rearm;
 	hardware_operation.set_mode_long_value = NULL;
 	hardware_operation.palm_sensor_write = NULL;
 	hardware_operation.cmd_update_func = nvt_cmd_mode_update;
@@ -4739,16 +4643,8 @@ static int32_t nvt_ts_suspend(struct device *dev)
 
 	ts->gesture_command = nvt_gesture_cmd(xiaomi_get_gesture_type(TOUCH_ID));
 
-	/*
-	 * Track what is armed right now, not a high-water mark. gesture_state
-	 * was only ever assigned true, so once any wake gesture had been armed
-	 * once, dsi_panel_gesture_enable(true) stayed latched for the rest of
-	 * the boot. dsi_panel_power_on() then keeps taking its "TP gesture mode"
-	 * branch, which only enables a single vreg instead of the full
-	 * regulator set - leaving the display dark while the rest of the system
-	 * runs normally.
-	 */
-	ts->gesture_state = !!ts->gesture_command;
+	if (ts->gesture_command)
+		ts->gesture_state = true;
 
 	dsi_panel_gesture_enable(ts->gesture_state);
 	nvt_enable_gesture_mode(true);
@@ -4794,7 +4690,6 @@ return:
 static int32_t nvt_ts_resume(struct device *dev)
 {
 	int ret = 0;
-	int32_t ic_ret = 0;
 	bool pm_wake_status = 0;
 
 	ts->nvt_tool_in_use = false;
@@ -4832,21 +4727,10 @@ static int32_t nvt_ts_resume(struct device *dev)
 #if NVT_TOUCH_SUPPORT_HW_RST
 	gpio_set_value(ts->reset_gpio, 1);
 #endif
-	/*
-	 * Keep the IC health separate from ret, which above only carries a
-	 * non-fatal pinctrl result. Callers need to know the controller did not
-	 * actually come back: this used to be discarded, so a resume against an
-	 * unpowered panel still reported success and every later command failed
-	 * with 0xFE for reasons that looked unrelated.
-	 */
 	if (nvt_update_firmware(BOOT_UPDATE_FIRMWARE_NAME)) {
 		NVT_ERR("download firmware failed, ignore check fw state\n");
-		ic_ret = -EIO;
 	} else {
-		ic_ret = nvt_check_fw_reset_state(RESET_STATE_REK);
-		if (ic_ret)
-			NVT_ERR("IC did not come back after reset (%d), touch and wake gestures are dead until the next resume\n",
-				ic_ret);
+		nvt_check_fw_reset_state(RESET_STATE_REK);
 	}
 
 	/* gesture mode setup */
@@ -4894,7 +4778,7 @@ static int32_t nvt_ts_resume(struct device *dev)
 
 	NVT_LOG("end\n");
 
-	return ic_ret;
+	return 0;
 }
 
 #if defined(_MSM_DRM_NOTIFY_H_)

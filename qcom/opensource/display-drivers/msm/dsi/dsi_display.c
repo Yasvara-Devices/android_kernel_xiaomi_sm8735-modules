@@ -5480,21 +5480,6 @@ static int dsi_display_dfps_update(struct dsi_display *display,
 	 */
 	panel_mode->dsi_mode_flags = 0;
 
-#ifdef MI_DISPLAY_MODIFY
-	/*
-	 * O10U: the DDIC gamma/overdrive bank (0x2F) follows refresh rate, but a
-	 * seamless DFPS switch otherwise never resends it -- the bank sticks at
-	 * whatever rate was active at panel enable, shifting colour at low grey
-	 * after any 135<->60/90 transition. cur_mode is already updated above so
-	 * the switch picks the bank matching the new rate.
-	 */
-	if (mi_get_panel_id_by_dsi_panel(display->panel) == O10U_PANEL_PA ||
-		mi_get_panel_id_by_dsi_panel(display->panel) == O10U_PANEL_PB) {
-		mutex_lock(&display->panel->panel_lock);
-		dsi_panel_gamma_switch_locked(display->panel);
-		mutex_unlock(&display->panel->panel_lock);
-	}
-#endif
 error:
 	SDE_EVT32(SDE_EVTLOG_FUNC_EXIT);
 	return rc;
@@ -8072,18 +8057,7 @@ int dsi_display_get_modes_helper(struct dsi_display *display,
 			if(mi_get_panel_id_by_dsi_panel(display->panel) == O10U_PANEL_PA ||
 				mi_get_panel_id_by_dsi_panel(display->panel) == O10U_PANEL_PB) {
 				if(sub_mode->timing.refresh_rate == 90) {
-					/* Pin the host VFP to the DDIC's 0x3B slot for
-					 * 90Hz. The value is a function of the base rate
-					 * in timing@0, so the two panels differ: PB runs a
-					 * 135Hz base (slot 4 = 1480), PA is still stock at
-					 * 120Hz (slot 4 = 988). Using 988 on a 135Hz base
-					 * would scan the "90Hz" mode at the wrong rate.
-					 */
-					if (mi_get_panel_id_by_dsi_panel(display->panel)
-							== O10U_PANEL_PB)
-						sub_mode->timing.v_front_porch = 1480;
-					else
-						sub_mode->timing.v_front_porch = 988;
+					sub_mode->timing.v_front_porch = 988;
 				}
 			}
 #endif
@@ -8839,7 +8813,7 @@ int dsi_display_set_mode(struct dsi_display *display,
 	}
 
 #ifdef MI_DISPLAY_MODIFY
-	memcpy(&last_mode, display->panel->cur_mode, sizeof(*display->panel->cur_mode));
+	memcpy(&last_mode, display->panel->cur_mode, sizeof(display->panel->cur_mode));
 	DSI_INFO("mdp_transfer_time=%d, clk_rate=%llu, hactive=%d, vactive=%d, fps=%d,"
 			"ddic_mode=%s, sf_fps=%d, ddic_min_fps=%d\n",
 			adj_mode.priv_info->mdp_transfer_time_us, adj_mode.priv_info->clk_rate_hz,

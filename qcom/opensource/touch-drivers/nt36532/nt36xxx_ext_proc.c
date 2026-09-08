@@ -18,8 +18,6 @@
 
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
-#include <linux/kernel.h>
-#include <linux/string.h>
 
 #include "nt36xxx.h"
 
@@ -53,12 +51,6 @@
 #define XM_HTC_FLG_BUF "xm_htc_flg_buf"
 #define XM_HTC_IC_LOG_LEVEL "xm_htc_ic_log_level"
 #define XM_HTC_FILTER_LEVEL "xm_htc_filter_level"
-/* Live SPI clock, so finding the IC's real ceiling costs a write instead of a
- * rebuild-and-flash per rate. The transfers in nvt_spi_read_write() leave
- * spi_transfer.speed_hz at 0, so the core falls back to spi->max_speed_hz and
- * this takes effect on the very next transfer.
- */
-#define XM_HTC_SPI_SPEED "xm_htc_spi_speed"
 #define XM_HTC_REPORT_COORDINATE "xm_htc_report_coordinate"
 #define XM_HTC_IDLE_BASELINE_UPDATE "xm_htc_idle_baseline_update"
 #define XM_HTC_CLICK_GESTURE_ENABLE "xm_htc_click_gesture_enable"
@@ -104,7 +96,6 @@ static struct proc_dir_entry *XM_HTC_proc_gesture_dbclk_entry;
 static struct proc_dir_entry *XM_HTC_proc_flg_buf_entry;
 static struct proc_dir_entry *XM_HTC_proc_ic_log_level_entry;
 static struct proc_dir_entry *XM_HTC_proc_filter_level_entry;
-static struct proc_dir_entry *XM_HTC_proc_spi_speed_entry;
 static struct proc_dir_entry *XM_HTC_proc_report_coordinate_entry;
 static struct proc_dir_entry *XM_HTC_proc_idle_baseline_update_entry;
 static struct proc_dir_entry *XM_HTC_proc_click_gesture_enable_entry;
@@ -3629,93 +3620,6 @@ static const struct file_operations xm_htc_filter_level_fops = {
 };
 #endif
 
-static ssize_t xm_htc_spi_speed_proc_read(struct file *filp, char __user *buf,
-					  size_t count, loff_t *f_pos)
-{
-	char tmp_buf[64];
-	size_t cnt;
-
-	if (*f_pos > 0)
-		return 0;
-
-	cnt = scnprintf(tmp_buf, sizeof(tmp_buf), "spi_speed: %u\n",
-			ts->client->max_speed_hz);
-	if (cnt > count)
-		cnt = count;
-	if (copy_to_user(buf, tmp_buf, cnt))
-		return -EFAULT;
-
-	*f_pos += cnt;
-	return cnt;
-}
-
-/* Set the SPI clock live.
- *
- * The floor is the slowest rate Novatek validated and the ceiling is what the
- * QUP can source without a voltage-corner change; the IC's receiver is the real
- * limit and is well below the ceiling, which is exactly what this node exists to
- * find. Verify a new rate with tools/nvt_spi_integrity.sh before trusting it --
- * the awake frame path has almost no integrity checking, so corruption there
- * surfaces as phantom contacts rather than as an error.
- *
- * On spi_setup() failure the previous rate is restored, so a rejected value
- * cannot leave the bus unusable.
- */
-static ssize_t xm_htc_spi_speed_proc_write(struct file *filp,
-					   const char __user *buf, size_t count,
-					   loff_t *f_pos)
-{
-	char tmp_buf[32];
-	uint32_t old_hz, hz;
-	int32_t ret;
-
-	if (count == 0 || count >= sizeof(tmp_buf))
-		return -EINVAL;
-
-	memset(tmp_buf, 0, sizeof(tmp_buf));
-	if (copy_from_user(tmp_buf, buf, count))
-		return -EFAULT;
-
-	if (kstrtou32(strim(tmp_buf), 0, &hz))
-		return -EINVAL;
-
-	if (hz < 4800000 || hz > 100000000) {
-		NVT_ERR("spi_speed %u out of range [4800000, 100000000]\n", hz);
-		return -EINVAL;
-	}
-
-	if (mutex_lock_interruptible(&ts->lock))
-		return -ERESTARTSYS;
-
-	old_hz = ts->client->max_speed_hz;
-	ts->client->max_speed_hz = hz;
-	ret = spi_setup(ts->client);
-	if (ret < 0) {
-		ts->client->max_speed_hz = old_hz;
-		spi_setup(ts->client);
-		mutex_unlock(&ts->lock);
-		NVT_ERR("spi_setup(%u) failed (%d), kept %u\n", hz, ret, old_hz);
-		return -EIO;
-	}
-
-	mutex_unlock(&ts->lock);
-	NVT_LOG("spi_speed %u -> %u\n", old_hz, hz);
-	return count;
-}
-
-#ifdef HAVE_PROC_OPS
-static const struct proc_ops xm_htc_spi_speed_fops = {
-	.proc_read = xm_htc_spi_speed_proc_read,
-	.proc_write = xm_htc_spi_speed_proc_write,
-};
-#else
-static const struct file_operations xm_htc_spi_speed_fops = {
-	.owner = THIS_MODULE,
-	.read = xm_htc_spi_speed_proc_read,
-	.write = xm_htc_spi_speed_proc_write,
-};
-#endif
-
 int32_t nvt_xm_htc_set_report_coordinate(int16_t report_coordinate)
 {
 	int32_t ret = 0;
@@ -4405,15 +4309,6 @@ int32_t nvt_extra_proc_init(void)
 		NVT_LOG("create proc/%s Succeeded!\n", NVT_EVENTBUF_DEBUG);
 	}
 
-	XM_HTC_proc_spi_speed_entry = proc_create(XM_HTC_SPI_SPEED, 0644, NULL,
-						  &xm_htc_spi_speed_fops);
-	if (XM_HTC_proc_spi_speed_entry == NULL) {
-		NVT_ERR("create proc/%s Failed!\n", XM_HTC_SPI_SPEED);
-		return -ENOMEM;
-	} else {
-		NVT_LOG("create proc/%s Succeeded!\n", XM_HTC_SPI_SPEED);
-	}
-
 	XM_HTC_proc_op_mode_entry =
 		proc_create(XM_HTC_OP_MODE, 0666, NULL, &xm_htc_op_mode_fops);
 	if (XM_HTC_proc_op_mode_entry == NULL) {
@@ -4671,12 +4566,6 @@ void nvt_extra_proc_deinit(void)
 		remove_proc_entry(NVT_EVENTBUF_DEBUG, NULL);
 		NVT_proc_eventbuf_debug_entry = NULL;
 		NVT_LOG("Removed /proc/%s\n", NVT_EVENTBUF_DEBUG);
-	}
-
-	if (XM_HTC_proc_spi_speed_entry != NULL) {
-		remove_proc_entry(XM_HTC_SPI_SPEED, NULL);
-		XM_HTC_proc_spi_speed_entry = NULL;
-		NVT_LOG("Removed /proc/%s\n", XM_HTC_SPI_SPEED);
 	}
 
 	if (XM_HTC_proc_op_mode_entry != NULL) {

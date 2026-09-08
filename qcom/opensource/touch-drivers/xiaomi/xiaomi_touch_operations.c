@@ -306,30 +306,6 @@ static long xiaomi_touch_dev_ioctl(struct file *file, unsigned int cmd,
 		    atomic_read(&xiaomi_touch_data->frame_data_buf_index))
 			return -1;
 
-		/*
-		 * The raw-frame ring has no back pressure: notify_raw_data_update()
-		 * keeps advancing whether or not TouchReport kept up, so once the
-		 * writer laps the reader the algorithm silently consumes a frame
-		 * that is being memcpy'd underneath it, which shows up as a
-		 * dropped contact rather than as an error.  Report how close the
-		 * reader is running to the writer so that starvation is visible.
-		 */
-		{
-			static u32 lag_report_count;
-			u8 size = xiaomi_touch_data->frame_data_buf_size;
-			int lag = atomic_read(
-					  &xiaomi_touch_data->frame_data_buf_index) -
-				  temp_index;
-
-			if (lag < 0)
-				lag += size;
-			if (size && lag >= size - (size >> 2) &&
-			    !(lag_report_count++ & 0x3F))
-				LOG_WARNING(
-					"frame ring lag %d/%u, TouchReport is close to being lapped (%u times)",
-					lag, size, lag_report_count);
-		}
-
 		atomic_inc(&client_private_data->frame_data_index);
 		if (atomic_read(&client_private_data->frame_data_index) >=
 		    xiaomi_touch_data->frame_data_buf_size)
