@@ -311,6 +311,7 @@ typedef struct hardware_operation {
 	int (*htc_ic_getModeValue)(common_data_t *common_data);
 
 	int (*ic_resume_suspend)(bool is_resume, u8 gesture_type);
+	int (*ic_gesture_rearm)(void);
 	void (*ic_set_charge_state)(int status);
 	void (*ic_set_fod_value)(s32 value[], int length);
 #ifdef TOUCH_FOD_SUPPORT
@@ -378,6 +379,11 @@ int update_stylus_connect_status_value(int value);
 #ifdef TOUCH_FOD_SUPPORT
 int update_fod_press_status(int value);
 #endif
+int notify_gesture_double_tap(void);
+int notify_gesture_single_tap(void);
+bool xiaomi_double_tap_wants_sensor(void);
+bool xiaomi_single_tap_wants_sensor(void);
+
 struct class *get_xiaomi_touch_class(void);
 int update_palm_sensor_value(int value);
 void *get_raw_data_base(s8 touch_id);

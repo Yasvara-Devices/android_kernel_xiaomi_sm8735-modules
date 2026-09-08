@@ -6612,7 +6612,13 @@ int dsi_panel_gamma_switch_locked(struct dsi_panel *panel)
 		DSI_ERR("panel_initialized fail\n");
 		return -EINVAL;
 	}
-	if (panel->cur_mode->timing.refresh_rate == 120){
+	/* >= 120 rather than == 120: 0x2F 00 is the DDIC's top-rate gamma bank
+	 * and there is no bank above it, so an overclocked base rate maps onto
+	 * the same command. An exact match would fall through the whole chain
+	 * silently (rc stays 0), leaving the DDIC on whatever bank the previous
+	 * rate selected -- a visible colour shift after any switch back up.
+	 */
+	if (panel->cur_mode->timing.refresh_rate >= 120){
 		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_FPS_120_GAMMA, false);
 	} else if (panel->cur_mode->timing.refresh_rate == 90) {
 		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_FPS_90_GAMMA, false);

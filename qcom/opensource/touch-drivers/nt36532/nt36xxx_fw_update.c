@@ -988,7 +988,7 @@ download_fail:
 request_firmware_fail:
 #if TOUCH_THP_SUPPORT
 	ts->xm_htc_sw_reset = false;
-	if (ret == 0 && ts->enable_touch_raw) {
+	if (ret == 0) {
 		extern int32_t nvt_xm_htc_set_op_mode(int16_t op_mode);
 		extern int32_t nvt_xm_htc_set_report_rate(int16_t report_rate);
 		nvt_xm_htc_set_op_mode(2);
@@ -1008,8 +1008,20 @@ return:
 *******************************************************/
 void Boot_Update_Firmware(struct work_struct *work)
 {
+	int32_t ret = 0;
+	static int retry_count = 0;
+
 	mutex_lock(&ts->lock);
-	nvt_update_firmware(BOOT_UPDATE_FIRMWARE_NAME);
+	ret = nvt_update_firmware(BOOT_UPDATE_FIRMWARE_NAME);
 	mutex_unlock(&ts->lock);
+
+	if (ret && retry_count < 30) {
+		retry_count++;
+		NVT_ERR("firmware not ready yet, retry %d in 2s\n", retry_count);
+		queue_delayed_work(nvt_fwu_wq, &ts->nvt_fwu_work,
+				   msecs_to_jiffies(2000));
+	} else if (!ret) {
+		NVT_ERR("Boot firmware update succeeded!\n");
+	}
 }
 #endif /* BOOT_UPDATE_FIRMWARE */
