@@ -669,6 +669,8 @@ int ipa_pm_init(struct ipa_pm_init_params *params)
 		clk_scaling->default_threshold[i] =
 			params->default_threshold[i];
 
+	clk_scaling->current_threshold = clk_scaling->default_threshold;
+
 	/* Populate exception list*/
 	for (i = 0; i < params->exception_size; i++) {
 		strscpy(clk_scaling->exception_list[i].clients,
@@ -749,6 +751,11 @@ int ipa_pm_register(struct ipa_pm_register_params *params, u32 *hdl)
 
 	if (params == NULL || hdl == NULL || params->name == NULL) {
 		IPA_PM_ERR("Invalid Params\n");
+		return -EINVAL;
+	}
+
+	if ((unsigned int)params->group >= IPA_PM_GROUP_MAX) {
+		IPA_PM_ERR("Invalid group %d\n", params->group);
 		return -EINVAL;
 	}
 
@@ -1304,6 +1311,7 @@ int ipa_pm_set_throughput(u32 hdl, int throughput)
 {
 	struct ipa_pm_client *client;
 	unsigned long flags;
+	bool run_scaling;
 
 	if (ipa_pm_ctx == NULL) {
 		IPA_PM_ERR("PM_ctx is null\n");
@@ -1311,42 +1319,34 @@ int ipa_pm_set_throughput(u32 hdl, int throughput)
 	}
 
 	mutex_lock(&ipa_pm_ctx->client_mutex);
-	if (hdl >= IPA_PM_MAX_CLIENTS || ipa_pm_ctx->clients[hdl] == NULL
-		|| throughput < 0) {
+	if (hdl == 0 || hdl >= IPA_PM_MAX_CLIENTS ||
+	    ipa_pm_ctx->clients[hdl] == NULL || throughput < 0) {
 		IPA_PM_ERR("Invalid Params\n");
 		mutex_unlock(&ipa_pm_ctx->client_mutex);
 		return -EINVAL;
 	}
-	client = ipa_pm_ctx->clients[hdl];
 
-	if (client->group == IPA_PM_GROUP_DEFAULT)
-		IPA_PM_DBG_LOW("Old throughput: %d\n",  client->throughput);
-	else
-		IPA_PM_DBG_LOW("old Group %d throughput: %d\n",
-			client->group, ipa_pm_ctx->group_tput[client->group]);
+	client = ipa_pm_ctx->clients[hdl];
 
 	if (client->group == IPA_PM_GROUP_DEFAULT)
 		client->throughput = throughput;
 	else
 		ipa_pm_ctx->group_tput[client->group] = throughput;
 
-	if (client->group == IPA_PM_GROUP_DEFAULT)
-		IPA_PM_DBG_LOW("New throughput: %d\n",  client->throughput);
-	else
-		IPA_PM_DBG_LOW("New Group %d throughput: %d\n",
-			client->group, ipa_pm_ctx->group_tput[client->group]);
+	/*
+	 * Deregistration frees clients under client_mutex. Make the
+	 * decision while the client is protected and do not use the
+	 * client pointer after dropping that mutex.
+	 */
+	spin_lock_irqsave(&client->state_lock, flags);
+	run_scaling = IPA_PM_STATE_ACTIVE(client->state) ||
+		      client->group != IPA_PM_GROUP_DEFAULT;
+	spin_unlock_irqrestore(&client->state_lock, flags);
+
 	mutex_unlock(&ipa_pm_ctx->client_mutex);
 
-	if (ipa_pm_ctx->clients[hdl]) {
-		spin_lock_irqsave(&client->state_lock, flags);
-		if (IPA_PM_STATE_ACTIVE(client->state) || (client->group !=
-			IPA_PM_GROUP_DEFAULT)) {
-			spin_unlock_irqrestore(&client->state_lock, flags);
-			do_clk_scaling();
-			return 0;
-		}
-		spin_unlock_irqrestore(&client->state_lock, flags);
-	}
+	if (run_scaling)
+		do_clk_scaling();
 
 	return 0;
 }
@@ -1536,12 +1536,19 @@ bool ipa_get_pm_client_stats_filled(struct pm_client_stats *pm_stats_ptr,
 	unsigned long flags;
 	int i;
 
-	client = ipa_pm_ctx->clients[pm_client_index];
+	if (!ipa_pm_ctx || !pm_stats_ptr ||
+	    pm_client_index <= 0 ||
+	    pm_client_index >= IPA_PM_MAX_CLIENTS)
+		return false;
+
 	mutex_lock(&ipa_pm_ctx->client_mutex);
-	if (client == NULL) {
+
+	client = ipa_pm_ctx->clients[pm_client_index];
+	if (!client) {
 		mutex_unlock(&ipa_pm_ctx->client_mutex);
 		return false;
 	}
+
 	spin_lock_irqsave(&client->state_lock, flags);
 	pm_stats_ptr->pm_client_group = client->group;
 	pm_stats_ptr->pm_client_state = client->state;
@@ -1565,20 +1572,31 @@ bool ipa_get_pm_client_stats_filled(struct pm_client_stats *pm_stats_ptr,
 	return true;
 }
 
-int ipa_pm_get_pm_clnt_throughput(enum ipa_client_type client_type)
+	int ipa_pm_get_pm_clnt_throughput(enum ipa_client_type client_type)
 {
+	struct ipa_pm_client *client;
 	int idx = ipa_get_ep_mapping(client_type);
-	int throughput;
+	int throughput = 0;
+
+	if (!ipa_pm_ctx)
+		return 0;
+
+	if ((unsigned int)client_type >= IPA_CLIENT_MAX)
+		return 0;
+
+	if (idx < 0 ||
+	    (unsigned int)idx >= ARRAY_SIZE(ipa_pm_ctx->clients_by_pipe))
+		return 0;
 
 	mutex_lock(&ipa_pm_ctx->client_mutex);
-	if (ipa_pm_ctx && (idx >= 0) && ipa_pm_ctx->clients_by_pipe[idx]) {
-		throughput = ipa_pm_ctx->clients_by_pipe[idx]->throughput;
-		mutex_unlock(&ipa_pm_ctx->client_mutex);
-		return throughput;
-	} else {
-		mutex_unlock(&ipa_pm_ctx->client_mutex);
-		return 0;
-	}
+
+	client = ipa_pm_ctx->clients_by_pipe[idx];
+	if (client)
+		throughput = client->throughput;
+
+	mutex_unlock(&ipa_pm_ctx->client_mutex);
+
+	return throughput;
 }
 
 /**
