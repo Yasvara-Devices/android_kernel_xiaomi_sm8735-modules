@@ -531,7 +531,7 @@ static int ipa_pm_notify(struct notifier_block *b, unsigned long event, void *p)
 			if (ipa3_ctx->ep[i].sys &&
 					atomic_read(&ipa3_ctx->ep[i].sys->curr_polling_state)) {
 				IPAERR("EP %d is in polling state, do not suspend\n", i);
-				return -EAGAIN;
+				return notifier_from_errno(-EAGAIN);
 			}
 		}
 		ipa_pm_deactivate_all_deferred();
