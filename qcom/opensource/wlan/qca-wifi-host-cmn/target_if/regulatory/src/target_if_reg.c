@@ -36,6 +36,7 @@
 #include <wlan_utility.h>
 #ifdef CONFIG_REG_CLIENT
 #include <wlan_dcs_tgt_api.h>
+#include <linux/moduleparam.h>
 #endif
 
 /**
@@ -239,6 +240,167 @@ target_if_reg_is_reg_cc_ext_event_host_supported(struct wlan_objmgr_psoc *psoc)
 	return reg_ext_cc_supp;
 }
 
+/*
+ * Indonesia's current Wi-Fi rules.
+ *
+ * The firmware's regdb still maps ID to Qualcomm APL2 (2.4 GHz plus 5735-5815 MHz at 20 MHz),
+ * the rule from before Permen Kominfo 1/2019 and Komdigi Decree 12/2025. Those allow
+ * 5150-5350 MHz (indoor, 5250-5350 with DFS), 5725-5825 MHz, and 5925-6425 MHz for LPI
+ * (23 dBm EIRP) and VLP (14 dBm, tethering allowed).
+ *
+ * When the host programs ID, the firmware is asked for SG instead, whose table is a superset
+ * (same DFS master and indoor rules), and the reply is trimmed back to the Indonesian ranges and
+ * powers before the host builds its channel list, then reported as ID. The firmware therefore
+ * never enables anything Singapore forbids, and the host never enables anything Indonesia
+ * forbids. Radar detection (DFS) is untouched.
+ *
+ * yasvara_id_regdb=0 (sysfs, before Wi-Fi starts) restores the stock APL2 behaviour.
+ */
+static bool yasvara_id_regdb = true;
+module_param(yasvara_id_regdb, bool, 0644);
+MODULE_PARM_DESC(yasvara_id_regdb, "Use Indonesia's 2019/2025 Wi-Fi rules for country ID");
+
+/* Set while the firmware is answering an ID request with the SG table. */
+static bool yasvara_id_mapped;
+
+#define YAS_ID_LPI_DBM		23
+#define YAS_ID_VLP_DBM		14
+#define YAS_ID_5G_LOW_DBM	23
+#define YAS_ID_5G_MAX_BW	80
+#define YAS_ID_6G_MAX_BW	160
+#define YAS_CTRY_INDONESIA	360
+
+static bool yasvara_is_alpha2(const uint8_t *a, const char *cc)
+{
+	return a[0] == cc[0] && a[1] == cc[1];
+}
+
+/*
+ * Keeps the parts of @rules inside [lo, hi] MHz, clamps power to @max_dbm and width to @max_bw,
+ * in place. Returns the new rule count.
+ */
+static uint32_t yasvara_trim_rules(struct cur_reg_rule *rules, uint32_t n,
+				   const uint16_t (*ranges)[2], int num_ranges,
+				   uint8_t max_dbm, uint16_t max_bw)
+{
+	uint32_t i, out = 0;
+	int r;
+
+	if (!rules)
+		return 0;
+
+	for (i = 0; i < n; i++) {
+		struct cur_reg_rule rule = rules[i];
+
+		for (r = 0; r < num_ranges; r++) {
+			uint16_t start = max_t(uint16_t, rule.start_freq, ranges[r][0]);
+			uint16_t end = min_t(uint16_t, rule.end_freq, ranges[r][1]);
+
+			/* Narrower than one 20 MHz channel: nothing usable. */
+			if (end < start + 20)
+				continue;
+			if (out >= n)
+				break;
+			rules[out] = rule;
+			rules[out].start_freq = start;
+			rules[out].end_freq = end;
+			rules[out].reg_power = min_t(uint8_t, rule.reg_power, max_dbm);
+			rules[out].max_bw = min_t(uint16_t, rule.max_bw, max_bw);
+			out++;
+		}
+	}
+	return out;
+}
+
+/* 5 GHz: 5150-5350 MHz at 23 dBm, and 5725-5825 MHz at the firmware's power. */
+static void yasvara_trim_5g(struct cur_regulatory_info *info)
+{
+	static const uint16_t low[][2] = { {5150, 5350} };
+	static const uint16_t high[][2] = { {5725, 5825} };
+	struct cur_reg_rule *rules = info->reg_rules_5g_ptr;
+	uint32_t i, n = info->num_5g_reg_rules, out = 0;
+
+	if (!rules)
+		return;
+
+	/*
+	 * Trim each rule against the band it belongs to, so the power cap of the low band never
+	 * touches 5.8 GHz. Rules are processed one by one to keep the in-place write behind the read.
+	 */
+	for (i = 0; i < n; i++) {
+		struct cur_reg_rule rule = rules[i];
+		uint32_t got;
+
+		got = yasvara_trim_rules(&rule, 1, low, 1, YAS_ID_5G_LOW_DBM,
+					 YAS_ID_5G_MAX_BW);
+		if (!got) {
+			rule = rules[i];
+			got = yasvara_trim_rules(&rule, 1, high, 1, 0xff,
+						 YAS_ID_5G_MAX_BW);
+		}
+		if (got)
+			rules[out++] = rule;
+	}
+	info->num_5g_reg_rules = out;
+	info->max_bw_5g = min_t(uint32_t, info->max_bw_5g, YAS_ID_5G_MAX_BW);
+}
+
+/* 6 GHz: 5925-6425 MHz, LPI 23 dBm and VLP 14 dBm; no standard power (no AFC in Indonesia). */
+static void yasvara_trim_6g(struct cur_regulatory_info *info)
+{
+	static const uint16_t band[][2] = { {5925, 6425} };
+	int ap, cl;
+
+	for (ap = 0; ap < REG_CURRENT_MAX_AP_TYPE; ap++) {
+		uint8_t cap;
+
+		if (ap == REG_STANDARD_POWER_AP)
+			cap = 0;
+		else if (ap == REG_VERY_LOW_POWER_AP)
+			cap = YAS_ID_VLP_DBM;
+		else
+			cap = YAS_ID_LPI_DBM;
+
+		if (!cap) {
+			info->num_6g_reg_rules_ap[ap] = 0;
+			for (cl = 0; cl < REG_MAX_CLIENT_TYPE; cl++)
+				info->num_6g_reg_rules_client[ap][cl] = 0;
+			continue;
+		}
+		info->num_6g_reg_rules_ap[ap] =
+			yasvara_trim_rules(info->reg_rules_6g_ap_ptr[ap],
+					   info->num_6g_reg_rules_ap[ap], band, 1,
+					   cap, YAS_ID_6G_MAX_BW);
+		info->max_bw_6g_ap[ap] = min_t(uint32_t, info->max_bw_6g_ap[ap],
+						YAS_ID_6G_MAX_BW);
+		for (cl = 0; cl < REG_MAX_CLIENT_TYPE; cl++) {
+			info->num_6g_reg_rules_client[ap][cl] =
+				yasvara_trim_rules(info->reg_rules_6g_client_ptr[ap][cl],
+						   info->num_6g_reg_rules_client[ap][cl],
+						   band, 1, cap, YAS_ID_6G_MAX_BW);
+			info->max_bw_6g_client[ap][cl] =
+				min_t(uint32_t, info->max_bw_6g_client[ap][cl],
+				      YAS_ID_6G_MAX_BW);
+		}
+	}
+}
+
+/* Turns the firmware's SG answer to an ID request into Indonesia's rules. */
+static void yasvara_fixup_id(struct cur_regulatory_info *info, bool ext)
+{
+	if (!yasvara_id_mapped || !yasvara_is_alpha2(info->alpha2, "SG"))
+		return;
+
+	yasvara_trim_5g(info);
+	if (ext)
+		yasvara_trim_6g(info);
+	info->alpha2[0] = 'I';
+	info->alpha2[1] = 'D';
+	info->ctry_code = YAS_CTRY_INDONESIA;
+	target_if_info("Yasvara: ID rules applied (%u 5 GHz rules)",
+		       info->num_5g_reg_rules);
+}
+
 /**
  * tgt_reg_chan_list_update_handler() - Channel list update handler
  * @handle: scn handle
@@ -302,6 +464,7 @@ static int tgt_reg_chan_list_update_handler(ol_scn_t handle, uint8_t *event_buf,
 	}
 
 	reg_info->psoc = psoc;
+	yasvara_fixup_id(reg_info, false);
 
 	status = reg_rx_ops->master_list_handler(reg_info);
 	if (status != QDF_STATUS_SUCCESS) {
@@ -462,6 +625,7 @@ static int tgt_reg_chan_list_ext_update_handler(ol_scn_t handle,
 	}
 
 	reg_info->psoc = psoc;
+	yasvara_fixup_id(reg_info, true);
 
 	status = reg_rx_ops->master_list_ext_handler(reg_info);
 	if (!QDF_IS_STATUS_SUCCESS(status)) {
@@ -664,9 +828,21 @@ static QDF_STATUS tgt_if_regulatory_set_country_code(
 	struct wlan_objmgr_psoc *psoc, void *arg)
 {
 	wmi_unified_t wmi_handle = get_wmi_unified_hdl_from_psoc(psoc);
+	struct set_country *cc = arg;
+	struct set_country mapped;
 
 	if (!wmi_handle)
 		return QDF_STATUS_E_FAILURE;
+
+	/* Yasvara: ask for SG's superset table for ID; see yasvara_fixup_id(). */
+	yasvara_id_mapped = yasvara_id_regdb && cc &&
+			    yasvara_is_alpha2(cc->country, "ID");
+	if (yasvara_id_mapped) {
+		mapped = *cc;
+		mapped.country[0] = 'S';
+		mapped.country[1] = 'G';
+		return wmi_unified_set_country_cmd_send(wmi_handle, &mapped);
+	}
 
 	return wmi_unified_set_country_cmd_send(wmi_handle, arg);
 }
