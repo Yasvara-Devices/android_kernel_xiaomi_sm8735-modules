@@ -637,6 +637,7 @@ enum msm_vidc_core_capability_type {
 	MAX_MBPF_B_FRAME,
 	MAX_MBPS_B_FRAME,
 	MAX_MBPS_ALL_INTRA,
+	MAX_ENC_MBPS,
 	MAX_ENH_LAYER_COUNT,
 	NUM_VPP_PIPE,
 	SW_PC,

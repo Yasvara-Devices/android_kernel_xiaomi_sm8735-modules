@@ -6,12 +6,11 @@ KBUILD_OPTIONS += KBUILD_EXTRA_SYMBOLS=$(M)/../mmrm-driver/Module.symvers
 
 all: modules
 
+# msm_video/driver and video/driver are relative symlinks to
+# driver/, kept in the tree: the platform build mounts the source read-only,
+# so they cannot be created (and removed again) at build time.
 modules:
-	ln -sf $(VIDEO_ROOT)/driver $(VIDEO_ROOT)/msm_video/driver
-	ln -sf $(VIDEO_ROOT)/driver $(VIDEO_ROOT)/video/driver
 	$(MAKE) -C $(KERNEL_SRC) M=$(M) modules $(KBUILD_OPTIONS)
-	rm $(VIDEO_ROOT)/msm_video/driver
-	rm $(VIDEO_ROOT)/video/driver
 
 modules_install:
 	$(MAKE) INSTALL_MOD_STRIP=1 -C $(KERNEL_SRC) M=$(M) modules_install

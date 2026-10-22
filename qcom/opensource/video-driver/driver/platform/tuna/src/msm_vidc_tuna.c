@@ -296,6 +296,11 @@ static struct msm_platform_core_capability core_data_tuna_v0[] = {
 	/* max_load 1920x1080@480fps which is greater than 7680x4320@30fps */
 	/* Concurrency: UHD@30 decode + uhd@30 encode */
 	{MAX_MBPS, 3916800},
+	/*
+	 * Encode ceiling of the 2-pipe Iris3 (PROD_IRIS3_2P), measured: 3840x2160@90 and
+	 * 1280x2772@220 run, 1080x2400@300 and 3840x2160@120 fail in firmware. 3840x2176@90.
+	 */
+	{MAX_ENC_MBPS, 2937600},
 	{MAX_IMAGE_MBPF, 1048576}, /* (16384x16384)/256 */
 	{MAX_MBPF_HQ, 8160}, /* ((1920x1088)/256) */
 	{MAX_MBPS_HQ, 244800}, /* ((1920x1088)/256)@30fps */

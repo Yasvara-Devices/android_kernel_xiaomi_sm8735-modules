@@ -1632,12 +1632,41 @@ int msm_vidc_process_readonly_buffers(struct msm_vidc_inst *inst,
 	return rc;
 }
 
+/* Encoder load ceiling; platforms without MAX_ENC_MBPS fall back to MAX_MBPS. */
+static u64 msm_vidc_max_enc_mbps(struct msm_vidc_core *core)
+{
+	return core->capabilities[MAX_ENC_MBPS].value ?: core->capabilities[MAX_MBPS].value;
+}
+
+/*
+ * Upper bound (Q16) for a rate derived from input timestamps. A burst of buffers (stream start,
+ * a producer catching up) has near-zero deltas; sent as-is the firmware gets a rate the session
+ * cannot sustain and fails it as fatal. The client's frame rate has passed the codec capability
+ * checks, so allow the same 12.5% headroom the power path uses, and never more than the core's
+ * MBPS can carry at this frame size.
+ */
+static u32 msm_vidc_auto_framerate_max(struct msm_vidc_inst *inst)
+{
+	struct msm_vidc_core *core = inst->core;
+	u64 declared = inst->capabilities[FRAME_RATE].value;
+	u64 max = inst->capabilities[FRAME_RATE].max;
+	u32 mbpf = msm_vidc_get_mbs_per_frame(inst);
+
+	if (inst->capabilities[FRAME_RATE].flags & CAP_FLAG_CLIENT_SET)
+		max = declared + declared / 8;
+
+	if (mbpf)
+		max = min_t(u64, max, div_u64(msm_vidc_max_enc_mbps(core), mbpf) << 16);
+
+	return (u32)min_t(u64, max, inst->capabilities[FRAME_RATE].max);
+}
+
 int msm_vidc_set_auto_framerate(struct msm_vidc_inst *inst, u64 timestamp)
 {
 	struct msm_vidc_core *core;
 	struct msm_vidc_timestamp *ts;
 	struct msm_vidc_timestamp *prev = NULL;
-	u32 counter = 0, prev_fr = 0, curr_fr = 0;
+	u32 counter = 0, prev_fr = 0, curr_fr = 0, max_fr;
 	u64 time_us = 0;
 	int rc = 0;
 
@@ -1651,14 +1680,15 @@ int msm_vidc_set_auto_framerate(struct msm_vidc_inst *inst, u64 timestamp)
 	if (rc)
 		goto exit;
 
+	max_fr = msm_vidc_auto_framerate_max(inst);
 	list_for_each_entry(ts, &inst->timestamps.list, sort.list) {
 		if (prev) {
 			time_us = ts->sort.val - prev->sort.val;
 			prev_fr = curr_fr;
 			curr_fr = time_us ? DIV64_U64_ROUND_CLOSEST(USEC_PER_SEC, time_us) << 16 :
 					inst->auto_framerate;
-			if (curr_fr > inst->capabilities[FRAME_RATE].max)
-				curr_fr = inst->capabilities[FRAME_RATE].max;
+			if (curr_fr > max_fr)
+				curr_fr = max_fr;
 			if (curr_fr < inst->capabilities[FRAME_RATE].min)
 				curr_fr = inst->capabilities[FRAME_RATE].min;
 		}
@@ -5091,10 +5121,10 @@ int msm_vidc_check_core_mbps(struct msm_vidc_inst *inst)
 	core_unlock(core, __func__);
 
 	if (is_encode_session(inst)) {
-		/* reject encoder if all encoders mbps is greater than MAX_MBPS */
-		if (enc_mbps > core->capabilities[MAX_MBPS].value) {
+		/* reject encoder if all encoders mbps is greater than the encode ceiling */
+		if (enc_mbps > msm_vidc_max_enc_mbps(core)) {
 			i_vpr_e(inst, "%s: Hardware overloaded. needed %llu, max %llu", __func__,
-				mbps, core->capabilities[MAX_MBPS].value);
+				enc_mbps, msm_vidc_max_enc_mbps(core));
 			return -ENOMEM;
 		}
 		/*
