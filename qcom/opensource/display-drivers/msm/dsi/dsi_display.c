@@ -5485,7 +5485,7 @@ static int dsi_display_dfps_update(struct dsi_display *display,
 	 * O10U: the DDIC gamma/overdrive bank (0x2F) follows refresh rate, but a
 	 * seamless DFPS switch otherwise never resends it -- the bank sticks at
 	 * whatever rate was active at panel enable, shifting colour at low grey
-	 * after any 135<->60/90 transition. cur_mode is already updated above so
+	 * after any seamless rate transition. cur_mode is already updated above so
 	 * the switch picks the bank matching the new rate.
 	 */
 	if (mi_get_panel_id_by_dsi_panel(display->panel) == O10U_PANEL_PA ||
@@ -8072,18 +8072,7 @@ int dsi_display_get_modes_helper(struct dsi_display *display,
 			if(mi_get_panel_id_by_dsi_panel(display->panel) == O10U_PANEL_PA ||
 				mi_get_panel_id_by_dsi_panel(display->panel) == O10U_PANEL_PB) {
 				if(sub_mode->timing.refresh_rate == 90) {
-					/* Pin the host VFP to the DDIC's 0x3B slot for
-					 * 90Hz. The value is a function of the base rate
-					 * in timing@0, so the two panels differ: PB runs a
-					 * 135Hz base (slot 4 = 1480), PA is still stock at
-					 * 120Hz (slot 4 = 988). Using 988 on a 135Hz base
-					 * would scan the "90Hz" mode at the wrong rate.
-					 */
-					if (mi_get_panel_id_by_dsi_panel(display->panel)
-							== O10U_PANEL_PB)
-						sub_mode->timing.v_front_porch = 1480;
-					else
-						sub_mode->timing.v_front_porch = 988;
+					sub_mode->timing.v_front_porch = 988;
 				}
 			}
 #endif
