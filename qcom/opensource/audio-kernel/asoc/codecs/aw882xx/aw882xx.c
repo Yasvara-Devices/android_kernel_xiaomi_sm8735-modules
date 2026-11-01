@@ -2957,7 +2957,10 @@ static int aw882xx_i2c_probe(struct i2c_client *i2c,
 	}
 
 	/*get gpio resource*/
-	aw882xx_gpio_request(aw882xx);
+	ret = aw882xx_gpio_request(aw882xx);
+	/* sia91xx shares the reset pins and may be probing its chip right now */
+	if (ret == -EBUSY)
+		return -EPROBE_DEFER;
 
 	/* hardware reset */
 	aw882xx_hw_reset(aw882xx);

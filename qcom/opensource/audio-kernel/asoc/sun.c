@@ -10,6 +10,7 @@
 #include <linux/of_gpio.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
+#include <linux/sort.h>
 #include <linux/io.h>
 #include <linux/module.h>
 #include <linux/input.h>
@@ -2624,6 +2625,13 @@ void set_smartpa_codec(struct device *dev, const char *dai_name)
 }
 EXPORT_SYMBOL_GPL(set_smartpa_codec);
 
+static int smartpa_dail_cmp(const void *a, const void *b)
+{
+	const struct snd_soc_dai_link_component *l = a, *r = b;
+
+	return strcmp(l->name, r->name);
+}
+
 static void smartpa_dai_link_select(void)
 {
 	struct snd_soc_dai_link *dailink = msm_tdm_dai_links;
@@ -2634,6 +2642,10 @@ static void smartpa_dai_link_select(void)
 		pr_err("%s smartpa_count:%d return \n", __func__, smartpa_count);
 		return;
 	}
+
+	/* a deferred amp registers late; keep the codec order independent of that */
+	sort(smartpa_dails, smartpa_count, sizeof(smartpa_dails[0]),
+	     smartpa_dail_cmp, NULL);
 
 	for (i = 0; i < size; i++) {
 		if (!strncmp(dailink[i].name, tdm_rx_dailink_name[tdm_rx0_id], strlen(dailink[i].name))
