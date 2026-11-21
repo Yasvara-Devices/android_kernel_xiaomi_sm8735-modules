@@ -91,6 +91,10 @@ ccflags-y += -I$(CAMERA_KERNEL_ROOT)/../securemsm-kernel/include/
 ccflags-y += ${ccflags-m}
 
 CFLAGS_drivers/cam_msger/cam_msger.o += -Wframe-larger-than=4096
+CFLAGS_drivers/camera_main.o += \
+	-DCAMERA_COMPILE_TIME=\"$(shell date -u +%Y-%m-%dT%H:%M:%SZ)\" \
+	-DCAMERA_COMPILE_BY=\"$(shell whoami)\" \
+	-DCAMERA_COMPILE_HOST=\"$(shell uname -n)\"
 
 camera-y := \
 	drivers/cam_req_mgr/cam_req_mgr_core.o \
