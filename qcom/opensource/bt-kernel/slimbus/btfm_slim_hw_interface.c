@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021, 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #include <linux/init.h>
@@ -190,7 +190,8 @@ void btfm_get_sampling_rate(uint32_t *sampling_rate)
 
 	if (*sampling_rate == 44100 || *sampling_rate == 48000) {
 		if (usecase_codec == LDAC ||
-		    usecase_codec == APTX_AD)
+		    usecase_codec == APTX_AD ||
+		    usecase_codec == LHDC)
 			*sampling_rate = (*sampling_rate) *2;
 	}
 
@@ -201,7 +202,7 @@ void btfm_get_sampling_rate(uint32_t *sampling_rate)
 		*sampling_rate = 96000;
 	}
 
-	if (usecase_codec == APTX_AD_QLEA)
+	if (usecase_codec == APTX_AD_QLEA || usecase_codec == APTX_PLUS)
 		*sampling_rate = 192000;
 
 	BTFMSLIM_INFO("current usecase codec type %s and sampling rate:%u khz",

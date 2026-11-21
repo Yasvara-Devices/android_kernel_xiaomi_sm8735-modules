@@ -177,6 +177,7 @@ int btfm_slim_disable_ch(struct btfmslim *btfmslim, struct btfmslim_ch *ch,
 {
 	int ret = -1;
 	int i = 0;
+	struct btfmslim_ch *chan = ch;
 	int chipset_ver = 0;
 	if (!btfmslim || !ch)
 		return -EINVAL;
@@ -215,9 +216,9 @@ int btfm_slim_disable_ch(struct btfmslim *btfmslim, struct btfmslim_ch *ch,
 		BTFMSLIM_ERR("slim_stream_unprepare failed returned val = %d", ret);
 
 	/* Disable port through registration setting */
-	for (i = 0; i < nchan; i++, ch++) {
+	for (i = 0; i < nchan; i++, chan++) {
 		if (btfmslim->vendor_port_en) {
-			ret = btfmslim->vendor_port_en(btfmslim, ch->port,
+			ret = btfmslim->vendor_port_en(btfmslim, chan->port,
 				rxport, 0);
 			if (ret < 0) {
 				BTFMSLIM_ERR("vendor_port_en failed [%d]", ret);
@@ -236,7 +237,10 @@ int btfm_slim_disable_ch(struct btfmslim *btfmslim, struct btfmslim_ch *ch,
 	if (btfm_num_ports_open > 0)
 		btfm_num_ports_open--;
 
-	ch->dai.sruntime = NULL;
+	if (ch->dai.sruntime != NULL) {
+		slim_stream_free(ch->dai.sruntime);
+		ch->dai.sruntime = NULL;
+	}
 
 	BTFMSLIM_INFO("btfm_num_ports_open: %d", btfm_num_ports_open);
 
@@ -278,7 +282,7 @@ static int btfm_slim_alloc_port(struct btfmslim *btfmslim)
 	rx_chs = btfmslim->rx_chs;
 	tx_chs = btfmslim->tx_chs;
 	if ((chipset_ver >=  QCA_CHEROKEE_SOC_ID_0310) &&
-		(chipset_ver <=  QCA_CHEROKEE_SOC_ID_0320_UMC)) {
+		(chipset_ver <=  QCA_CHEROKEE_SOC_ID_0330)) {
 		for (i = 0; (tx_chs->port != BTFM_SLIM_PGD_PORT_LAST) &&
 		(i < BTFM_SLIM_NUM_CODEC_DAIS); i++, tx_chs++) {
 			if (tx_chs->port == SLAVE_SB_PGD_PORT_TX1_FM)
@@ -418,6 +422,7 @@ int btfm_slim_hw_init(struct btfmslim *btfmslim)
 		chipset_ver ==  QCA_CHEROKEE_SOC_ID_0310  ||
 		chipset_ver ==  QCA_CHEROKEE_SOC_ID_0320  ||
 		chipset_ver ==  QCA_CHEROKEE_SOC_ID_0320_UMC  ||
+		chipset_ver ==  QCA_CHEROKEE_SOC_ID_0330  ||
 		chipset_ver ==  QCA_APACHE_SOC_ID_0100  ||
 		chipset_ver ==  QCA_APACHE_SOC_ID_0110  ||
 		chipset_ver ==  QCA_APACHE_SOC_ID_0120 ||
