@@ -266,7 +266,6 @@ struct p2p_param {
  * @param:            p2p parameters to be used
  * @connection_status:Global P2P connection status
  * @mcc_quota_ev_os_if_cb:  callback to OS IF to indicate mcc quota event
- * @mgmt_frm_registration_update: mgmt frame registration update
  * @sta_vdev_for_p2p_dev_operations: Use sta vdev for p2p device operations
  * @sta_vdev_id: store sta vdev_id to use it for p2p device operation.
  */
@@ -290,7 +289,6 @@ struct p2p_soc_priv_obj {
 #ifdef WLAN_FEATURE_MCC_QUOTA
 	mcc_quota_event_callback mcc_quota_ev_os_if_cb;
 #endif
-	uint32_t mgmt_frm_registration_update;
 	bool sta_vdev_for_p2p_dev_operations;
 	uint32_t sta_vdev_id;
 };
@@ -702,26 +700,6 @@ p2p_check_and_force_scc_go_plus_go(struct wlan_objmgr_psoc *psoc,
 #endif /* WLAN_FEATURE_P2P_P2P_STA */
 
 /**
- * p2p_set_mgmt_frm_registration_update() - Set mgmt registration update
- * @psoc: pointer to psoc object
- * @mgmt_frm_registration_update: mgmt frame registration update value
- *
- * Return: None
- */
-void
-p2p_set_mgmt_frm_registration_update(struct wlan_objmgr_psoc *psoc,
-				     uint32_t mgmt_frm_registration_update);
-
-/**
- * p2p_get_mgmt_frm_registration_update() - Get mgmt registration update
- * @psoc: pointer to psoc object
- *
- * Return: uint32_t
- */
-uint32_t
-p2p_get_mgmt_frm_registration_update(struct wlan_objmgr_psoc *psoc);
-
-/**
  * p2p_parse_assoc_ie_for_device_info() - This function finds P2P interface
  * address from assocaition IE
  * @assoc_ie: Association request IE
@@ -964,4 +942,15 @@ p2p_set_rand_mac_for_p2p_dev(struct wlan_objmgr_psoc *soc,
  */
 QDF_STATUS
 p2p_force_restrict_dfs_go_csa(struct wlan_objmgr_vdev *vdev, bool val);
+
+/**
+ * p2p_is_p2p_go_noa_in_progress() - Check whether P2P GO single shot noa
+ * is in progress or not
+ * @pdev: PDEV object manager for P2P GO
+ * @vdev_id: vdev id
+ *
+ * Return: True/False
+ */
+bool p2p_is_p2p_go_noa_in_progress(struct wlan_objmgr_pdev *pdev,
+				   uint8_t vdev_id);
 #endif /* _WLAN_P2P_MAIN_H_ */

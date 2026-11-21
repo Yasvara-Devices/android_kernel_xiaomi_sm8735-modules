@@ -4541,6 +4541,8 @@ void lim_process_add_sta_rsp(struct mac_context *mac_ctx,
 		lim_ndp_add_sta_rsp(mac_ctx, session, msg->bodyptr);
 	else if (add_sta_params->staType == STA_ENTRY_TDLS_PEER)
 		lim_process_tdls_add_sta_rsp(mac_ctx, msg->bodyptr, session);
+	else if (LIM_IS_PASSTHRU_ROLE(session))
+		lim_passthru_add_sta_rsp(mac_ctx, session, msg->bodyptr);
 	else
 		lim_process_mlm_add_sta_rsp(mac_ctx, msg, session);
 
@@ -5106,49 +5108,35 @@ void lim_get_short_slot_from_phy_mode(struct mac_context *mac, struct pe_session
 	*pShortSlotEnabled = val;
 }
 
-/**
- *
- * \brief This function is called by various LIM modules to correctly set
- * the Protected bit in the Frame Control Field of the 802.11 frame MAC header
- *
- *
- * \param  mac Pointer to Global MAC structure
- *
- * \param pe_session Pointer to session corresponding to the connection
- *
- * \param peer Peer address of the STA to which the frame is to be sent
- *
- * \param pMacHdr Pointer to the frame MAC header
- *
- * \return nothing
- *
- *
- */
 void
 lim_set_protected_bit(struct mac_context *mac,
 		      struct pe_session *pe_session,
-		      tSirMacAddr peer, tpSirMacMgmtHdr pMacHdr)
+		      tSirMacAddr peer_mac, tpSirMacMgmtHdr pMacHdr)
 {
 	uint16_t aid;
 	tpDphHashNode sta;
 
-	sta = dph_lookup_hash_entry(mac, peer, &aid,
+	sta = dph_lookup_hash_entry(mac, peer_mac, &aid,
 				    &pe_session->dph.dphHashTable);
-	if (sta) {
-		/* rmfenabled will be set at the time of addbss.
-		 * but sometimes EAP auth fails and keys are not
-		 * installed then if we send any management frame
-		 * like deauth/disassoc with this bit set then
-		 * firmware crashes. so check for keys are
-		 * installed or not also before setting the bit
-		 */
-		if (sta->rmfEnabled && sta->is_key_installed)
-			pMacHdr->fc.wep = 1;
-
-		pe_debug("wep:%d rmf:%d is_key_set:%d", pMacHdr->fc.wep,
-			 sta->rmfEnabled, sta->is_key_installed);
+	if (!sta) {
+		pe_debug(QDF_MAC_ADDR_FMT " not found sta ds",
+			 QDF_MAC_ADDR_REF(peer_mac));
+		return;
 	}
-} /*** end lim_set_protected_bit() ***/
+
+	/* rmfenabled will be set at the time of addbss.
+	 * but sometimes EAP auth fails and keys are not
+	 * installed then if we send any management frame
+	 * like deauth/disassoc with this bit set then
+	 * firmware crashes. so check for keys are
+	 * installed or not also before setting the bit
+	 */
+	if (!sta->rmfEnabled)
+		return;
+
+	if (wlan_peer_is_key_installed(mac->psoc, peer_mac))
+		pMacHdr->fc.wep = 1;
+}
 
 void lim_set_ht_caps(struct mac_context *p_mac, uint8_t *p_ie_start,
 		     uint32_t num_bytes)
@@ -8945,6 +8933,82 @@ void lim_update_tdls_sta_eht_capable(struct mac_context *mac,
 #endif
 #endif
 
+#ifdef DRIVER_PASSTHRU_MODE
+QDF_STATUS
+lim_passthru_mlme_vdev_disconnect_peers(struct vdev_mlme_obj *vdev_mlme,
+					uint16_t data_len, void *data)
+{
+	struct pe_session *session;
+	struct mac_context *mac_ctx;
+	uint8_t i = 0;
+	tpDphHashNode sta_ds = NULL;
+	QDF_STATUS status;
+
+	if (!data) {
+		mac_ctx = cds_get_context(QDF_MODULE_ID_PE);
+		if (!mac_ctx) {
+			pe_err("mac ctx is null");
+			return QDF_STATUS_E_INVAL;
+		}
+		session = pe_find_session_by_vdev_id(mac_ctx,
+				vdev_mlme->vdev->vdev_objmgr.vdev_id);
+		if (!session) {
+			pe_err("session is NULL");
+			return QDF_STATUS_E_INVAL;
+		}
+	} else {
+		session = (struct pe_session *)data;
+		mac_ctx = session->mac_ctx;
+	}
+
+	if (!(session && LIM_IS_PASSTHRU_ROLE(session))) {
+		pe_info("session not in passthru mode");
+		return QDF_STATUS_E_INVAL;
+	}
+
+	for (i = 1; i < session->dph.dphHashTable.size; i++) {
+		sta_ds = dph_get_hash_entry(mac_ctx, i,
+					    &session->dph.dphHashTable);
+		if (!sta_ds || !sta_ds->valid)
+			continue;
+		status = lim_del_sta(mac_ctx, sta_ds, false, session);
+		if (QDF_STATUS_SUCCESS == status) {
+			lim_delete_dph_hash_entry(mac_ctx, sta_ds->staAddr,
+						  sta_ds->assocId, session);
+			lim_release_peer_idx(mac_ctx, sta_ds->assocId, session);
+		} else {
+			pe_err("lim_del_sta failed with Status: %d", status);
+			QDF_ASSERT(0);
+		}
+	}
+
+	return QDF_STATUS_SUCCESS;
+}
+
+void lim_update_passthru_config(struct mac_context *mac,
+				tpAddStaParams add_sta_params,
+				tpDphHashNode sta_ds,
+				struct pe_session *session_entry)
+{
+	if (sta_ds->staType != STA_ENTRY_PASSTHRU_PEER) {
+		pe_err("Invalid peer type");
+		return;
+	}
+	add_sta_params->eht_capable = 0;
+	add_sta_params->he_capable = sta_ds->mlmStaContext.he_capable;
+	if (add_sta_params->he_capable)
+		qdf_mem_copy(&add_sta_params->he_config, &sta_ds->he_config,
+			     sizeof(add_sta_params->he_config));
+	add_sta_params->ht_caps = (*(uint16_t *)&session_entry->ht_config);
+	add_sta_params->vht_caps = session_entry->vht_config.caps;
+	add_sta_params->create_only =
+		session_entry->passthru_pending_create_only;
+	pe_debug("passthru eht_capable: %d he_capable: %d create_only: %d",
+		 add_sta_params->eht_capable, add_sta_params->he_capable,
+		 add_sta_params->create_only);
+}
+#endif
+
 void lim_update_sta_eht_capable(struct mac_context *mac,
 				tpAddStaParams add_sta_params,
 				tpDphHashNode sta_ds,
@@ -11120,6 +11184,39 @@ void lim_overwrite_sta_puncture(struct pe_session *session,
 #else
 #endif
 
+static inline QDF_STATUS
+lim_fill_session_nss_params_on_create(struct mac_context *mac_ctx,
+				      struct pe_session *session)
+{
+	struct vdev_type_nss *vdev_type_nss;
+	enum QDF_OPMODE opmode;
+	enum bss_type bss_type = eSIR_DONOT_USE_BSS_TYPE;
+
+	opmode = wlan_get_opmode_from_vdev_id(mac_ctx->pdev, session->vdev_id);
+	if (opmode == QDF_PASSTHRU_MODE)
+		bss_type = eSIR_PASSTHRU_MODE;
+
+	pe_debug("opmode %d bss_type %d", opmode, bss_type);
+	if (!wlan_reg_is_24ghz_ch_freq(session->curr_op_freq)) {
+		vdev_type_nss = &mac_ctx->vdev_type_nss_5g;
+	} else {
+		vdev_type_nss = &mac_ctx->vdev_type_nss_2g;
+	}
+
+	switch (bss_type) {
+	case eSIR_PASSTHRU_MODE:
+		/* Use STA mode NSS config for PASSTHRU */
+		session->vdev_nss = vdev_type_nss->sta;
+		break;
+	default:
+		/* not used anywhere...used in scan function */
+		break;
+	}
+
+	session->nss = session->vdev_nss;
+	return QDF_STATUS_SUCCESS;
+}
+
 QDF_STATUS lim_set_session_channel_params(struct mac_context *mac,
 					  struct pe_session *session)
 {
@@ -11203,6 +11300,9 @@ QDF_STATUS lim_set_session_channel_params(struct mac_context *mac,
 	session->ch_width = ch_params.ch_width;
 	session->ch_center_freq_seg0 = ch_params.center_freq_seg0;
 	session->ch_center_freq_seg1 = ch_params.center_freq_seg1;
+
+	if (LIM_IS_PASSTHRU_ROLE(session))
+		lim_fill_session_nss_params_on_create(mac, session);
 
 	mlme_obj = wlan_vdev_mlme_get_cmpt_obj(session->vdev);
 	if (!mlme_obj) {
@@ -11416,7 +11516,9 @@ bool lim_update_channel_width(struct mac_context *mac_ctx,
 		oper_mode = CH_WIDTH_20MHZ;
 	}
 
-	fw_vht_ch_wd = wlan_mlme_get_max_bw();
+	fw_vht_ch_wd = wlan_mlme_get_max_curr_bw(mac_ctx->pdev,
+						  session->curr_op_freq,
+						  ch_width);
 
 	if (ch_width > fw_vht_ch_wd) {
 		pe_debug_rl(QDF_MAC_ADDR_FMT ": Downgrade new bw: %d to max %d",

@@ -1,6 +1,7 @@
-load("//build/bazel_common_rules/dist:dist.bzl", "copy_to_dist_dir")
 load("//build/kernel/kleaf:kernel.bzl", "ddk_module")
 load(":target_variants.bzl", "get_all_variants")
+load("@rules_pkg//pkg:install.bzl", "pkg_install")
+load("@rules_pkg//pkg:mappings.bzl", "pkg_files", "strip_prefix")
 
 _target_chipset_map = {
     "neo-la": [
@@ -2290,6 +2291,11 @@ _conditional_srcs = {
             "cmn/qdf/linux/src/qdf_page_pool.c",
         ],
     },
+    "CONFIG_WLAN_HAPS_ENABLE": {
+        True: [
+            "components/dp/core/src/wlan_dp_haps.c",
+        ],
+    },
 }
 
 def _define_module_for_target_variant_chipset(target, variant, chipset):
@@ -2469,6 +2475,36 @@ def _define_module_for_target_variant_chipset(target, variant, chipset):
             "//vendor/qcom/opensource/dataipa:{}_{}_ipam".format(target, variant),
         ]
 
+    deps = deps + select({
+        ":wonder_enabled": [
+	    # Add dependency of wonder here
+        ],
+        "//conditions:default": [],
+    })
+
+    wonder_srcs = "wonder_srcs_{}".format(tvc)
+    native.filegroup(
+        name = wonder_srcs,
+        srcs = select({
+            ":wonder_enabled": [
+                "core/hdd/src/wlan_hdd_wondertap.c",
+            ],
+            "//conditions:default": ["core/hdd/inc/wlan_hdd_wondertap.h"],
+        }),
+        visibility = ["//visibility:private"],
+    )
+
+    combined_conditional_srcs = dict(_conditional_srcs)
+    wonder_kcfg_key = "CONFIG_DRIVER_PASSTHRU_MODE"
+    existing_inner = combined_conditional_srcs.get(wonder_kcfg_key, {})
+    existing_true_list = existing_inner.get(True, [])
+    existing_true_list = existing_true_list + [
+            ":{}".format(wonder_srcs),
+    ]
+    existing_inner = dict(existing_inner)
+    existing_inner[True] = existing_true_list
+    combined_conditional_srcs[wonder_kcfg_key] = existing_inner
+
     print("name=", name)
     print("hw=", hw)
     print("ipaths=", ipaths)
@@ -2486,7 +2522,7 @@ def _define_module_for_target_variant_chipset(target, variant, chipset):
         includes = ipaths + ["."],
         kconfig = kconfig,
         defconfig = defconfig,
-        conditional_srcs = _conditional_srcs,
+        conditional_srcs = combined_conditional_srcs,
         copts = copts,
         out = out,
         kernel_build = kernel_build,
@@ -2500,25 +2536,29 @@ def define_dist(target, variant, chipsets):
         tvc = "{}_{}_{}".format(target, variant, c)
         name = "{}_qca_cld_{}".format(tv, c)
         dataList.append(":{}".format(name))
-        copy_to_dist_dir(
-            name = "{}_modules_dist".format(tvc),
-            data = [":{}".format(name)],
-            dist_dir = "out/target/product/{}/dlkm/lib/modules/".format(target),
-            flat = True,
-            wipe_dist_dir = False,
-            allow_duplicate_filenames = False,
-            mode_overrides = {"**/*": "644"},
-            log = "info",
+
+        pkg_files(
+            name = tvc + "_dist_files",
+            srcs = [":{}".format(name)],
+            visibility = ["//visibility:private"],
+            strip_prefix = strip_prefix.files_only(),
         )
-    copy_to_dist_dir(
+        pkg_install(
+            name = "{}_modules_dist".format(tvc),
+            srcs = [":{}_dist_files".format(tvc)],
+            destdir = "out/target/product/{}/dlkm/lib/modules/".format(target),
+        )
+
+    pkg_files(
+        name = tv + "_dist_files",
+        srcs = dataList,
+        visibility = ["//visibility:private"],
+        strip_prefix = strip_prefix.files_only(),
+    )
+    pkg_install(
         name = "{}_all_modules_dist".format(tv),
-        data = dataList,
-        dist_dir = "out/target/product/{}/dlkm/lib/modules/".format(target),
-        flat = True,
-        wipe_dist_dir = False,
-        allow_duplicate_filenames = False,
-        mode_overrides = {"**/*": "644"},
-        log = "info",
+        srcs = [":{}_dist_files".format(tv)],
+        destdir = "out/target/product/{}/dlkm/lib/modules/".format(target),
     )
 
 def define_modules():

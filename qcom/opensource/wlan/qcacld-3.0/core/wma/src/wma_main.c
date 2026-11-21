@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2013-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -126,6 +126,7 @@
 #include "wlan_dp_ucfg_api.h"
 #include "wma_pasn_peer_api.h"
 #include "target_if_mgmt_rx_srng.h"
+#include "wlan_cp_stats_utils_api.h"
 
 #define WMA_LOG_COMPLETION_TIMER 500 /* 500 msecs */
 #define WMI_TLV_HEADROOM 128
@@ -741,6 +742,7 @@ static void wma_set_default_tgt_config(tp_wma_handle wma_handle,
 		policy_mgr_get_max_conc_cxns(wma_handle->psoc);
 	tgt_cfg->num_max_mlo_link_per_ml_bss =
 		wlan_mlme_get_sta_mlo_conn_max_num(wma_handle->psoc);
+	tgt_cfg->haps_feature_flags = ucfg_dp_get_haps_config(wma_handle->psoc);
 	cfg_nan_get_max_ndi(wma_handle->psoc,
 			    &tgt_cfg->max_ndi);
 
@@ -772,6 +774,9 @@ static void wma_set_default_tgt_config(tp_wma_handle wma_handle,
 		wma_set_smem_mailbox_feature(wma_handle, tgt_cfg);
 	if (wma_is_epm_supported_cfg(wma_handle))
 		wma_set_epm_feature(wma_handle, tgt_cfg);
+
+	tgt_cfg->enable_bcn_rssi_history_report =
+			cds_cfg->enable_bcn_rssi_history_report;
 }
 
 /**
@@ -3608,6 +3613,54 @@ mem_err:
 	return QDF_STATUS_E_NOMEM;
 }
 
+#ifdef DRIVER_PASSTHRU_MODE
+static
+int wma_passthru_get_tsf_timer_resp_handler(ol_scn_t scn, uint8_t *event_buf,
+					    uint32_t len)
+{
+	tp_wma_handle wma_handle = (tp_wma_handle)scn;
+	WMI_OCB_GET_TSF_TIMER_RESP_EVENTID_param_tlvs *param_tlvs;
+	wmi_ocb_get_tsf_timer_resp_event_fixed_param *fix_param;
+	struct ocb_get_tsf_timer_response response;
+
+	if (!scn || !event_buf) {
+		wma_err("scn: 0x%pK, data: 0x%pK", scn, event_buf);
+		return -EINVAL;
+	}
+
+	param_tlvs = (WMI_OCB_GET_TSF_TIMER_RESP_EVENTID_param_tlvs *)event_buf;
+	fix_param = param_tlvs->fixed_param;
+	response.vdev_id = fix_param->vdev_id;
+	response.timer_high = fix_param->tsf_timer_high;
+	response.timer_low = fix_param->tsf_timer_low;
+
+	if (wma_handle->get_tsf_cb)
+		wma_handle->get_tsf_cb(wma_handle->get_tsf_cb_ctx, &response);
+
+	wma_handle->get_tsf_cb = NULL;
+	wma_handle->get_tsf_cb_ctx = NULL;
+
+	return 0;
+}
+
+static
+void wma_register_passthru_events(tp_wma_handle wma_handle)
+{
+	QDF_STATUS status;
+
+	status = wmi_unified_register_event(wma_handle->wmi_handle,
+					    wmi_ocb_get_tsf_timer_resp_event_id,
+					    wma_passthru_get_tsf_timer_resp_handler);
+	if (QDF_IS_STATUS_ERROR(status))
+		wma_err("Failed to register Passthru TSF resp event cb");
+}
+#else
+static inline
+void wma_register_passthru_events(tp_wma_handle wma_handle)
+{
+}
+#endif
+
 /**
  * wma_open() - Allocate wma context and initialize it.
  * @psoc: psoc object
@@ -4125,6 +4178,7 @@ QDF_STATUS wma_open(struct wlan_objmgr_psoc *psoc,
 	wma_register_wlm_stats_events(wma_handle);
 	wma_register_wlm_latency_level_event(wma_handle);
 	wma_register_mws_coex_events(wma_handle);
+	wma_register_passthru_events(wma_handle);
 	wma_trace_init();
 	wma_set_exclude_selftx_from_cca_busy_time(
 			cds_cfg->exclude_selftx_from_cca_busy,
@@ -5471,6 +5525,24 @@ static void wma_nan_set_pairing_feature(void)
 }
 #endif /* WLAN_FEATURE_NAN */
 
+#ifdef DRIVER_PASSTHRU_MODE
+static void wma_get_passthru_support(struct wmi_unified *wmi_handle,
+				     struct wma_tgt_services *cfg)
+{
+	cfg->is_passthru_chan_hop_supported =
+		wmi_service_enabled(wmi_handle,
+				    wmi_service_passthru_vdev_chan_hop_schedule_support);
+	cfg->is_passthru_ampdu_ra_supported =
+		wmi_service_enabled(wmi_handle,
+				    wmi_service_passthru_vdev_ampdu_ra_support);
+}
+#else
+static inline void wma_get_passthru_support(struct wmi_unified *wmi_handle,
+					    struct wma_tgt_services *cfg)
+{
+}
+#endif
+
 /**
  * wma_update_target_services() - update target services from wma handle
  * @wmi_handle: Unified wmi handle
@@ -5622,6 +5694,7 @@ static inline void wma_update_target_services(struct wmi_unified *wmi_handle,
 	wma_get_service_cap_per_link_mlo_stats(wmi_handle, cfg);
 	wma_get_n_link_mlo_support(wmi_handle, cfg);
 	wma_get_mlo_tid_to_link_mapping_support(wmi_handle, cfg);
+	wma_get_passthru_support(wmi_handle, cfg);
 }
 
 /**
@@ -10043,6 +10116,8 @@ QDF_STATUS wma_send_set_pcl_cmd(tp_wma_handle wma_handle,
 		return status;
 	}
 
+	wma_debug("RSO_CFG: BandCapability:%d, band_mask:%d vdev_id:%d",
+		  band_bitmap, msg->band_mask, msg->vdev_id);
 	/*
 	 * if vdev_id is WLAN_UMAC_VDEV_ID_MAX, then roaming is enabled on
 	 * only one sta, so PDEV PCL command needs to be sent.
@@ -10053,8 +10128,6 @@ QDF_STATUS wma_send_set_pcl_cmd(tp_wma_handle wma_handle,
 		return wlan_cm_roam_send_set_vdev_pcl(wma_handle->psoc, msg);
 
 
-	wma_debug("RSO_CFG: BandCapability:%d, band_mask:%d",
-		  band_bitmap, msg->band_mask);
 	for (i = 0; i < wma_handle->saved_chan.num_channels; i++) {
 		msg->chan_weights.saved_chan_list[i] =
 					wma_handle->saved_chan.ch_freq_list[i];

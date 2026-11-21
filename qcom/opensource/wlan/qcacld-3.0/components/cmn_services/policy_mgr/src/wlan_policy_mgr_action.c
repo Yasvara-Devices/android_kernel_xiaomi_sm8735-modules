@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -46,6 +46,7 @@
 #include "wlan_psoc_mlme_api.h"
 #include "wlan_policy_mgr_ll_sap.h"
 #include "wlan_cm_roam_api.h"
+#include "wlan_ll_sap_api.h"
 
 enum policy_mgr_conc_next_action (*policy_mgr_get_current_pref_hw_mode_ptr)
 	(struct wlan_objmgr_psoc *psoc);
@@ -457,6 +458,7 @@ policy_mgr_get_connection_table_entry_info(struct wlan_objmgr_pdev *pdev,
 	struct wlan_channel *chan;
 	QDF_STATUS status = QDF_STATUS_E_INVAL;
 	struct vdev_mlme_obj *vdev_mlme;
+	uint32_t mac_id;
 
 	vdev = wlan_objmgr_get_vdev_by_id_from_pdev(pdev, vdev_id,
 			WLAN_POLICY_MGR_ID);
@@ -475,13 +477,19 @@ policy_mgr_get_connection_table_entry_info(struct wlan_objmgr_pdev *pdev,
 		goto rel_ref;
 	}
 
+	mac_id = wlan_mlme_get_vdev_mac_id(vdev);
+	if (mac_id > MAX_MAC) {
+		policy_mgr_err("Invalid mac for vdev %d", vdev_id);
+		goto rel_ref;
+	}
+
 	conn_table_entry->type = vdev_mlme->mgmt.generic.type;
 	conn_table_entry->sub_type = vdev_mlme->mgmt.generic.subtype;
 	conn_table_entry->vdev_id = vdev_id;
 	conn_table_entry->mhz = chan->ch_freq;
 	conn_table_entry->chan_width = chan->ch_width;
 	conn_table_entry->ch_flagext = chan->ch_flagext;
-	conn_table_entry->mac_id = wlan_mlme_get_vdev_mac_id(pdev, vdev_id);
+	conn_table_entry->mac_id = mac_id;
 
 	status = QDF_STATUS_SUCCESS;
 rel_ref:
@@ -1984,6 +1992,7 @@ bool policy_mgr_is_sap_restart_required_after_sta_disconnect(
 	uint32_t sta_gc_present = 0;
 	qdf_freq_t user_config_freq = 0;
 	enum reg_wifi_band user_band, op_band;
+	qdf_freq_t ll_sap_freq;
 
 	if (intf_ch_freq)
 		*intf_ch_freq = 0;
@@ -1994,6 +2003,7 @@ bool policy_mgr_is_sap_restart_required_after_sta_disconnect(
 		return false;
 	}
 
+	ll_sap_freq = policy_mgr_get_ll_lt_sap_freq(psoc);
 	policy_mgr_get_sta_sap_scc_on_dfs_chnl(psoc, &sta_sap_scc_on_dfs_chnl_config_value);
 
 	if (!policy_mgr_is_hw_dbs_capable(psoc))
@@ -2083,7 +2093,7 @@ bool policy_mgr_is_sap_restart_required_after_sta_disconnect(
 		op_band = wlan_reg_freq_to_band(op_ch_freq_list[i]);
 		user_band = wlan_reg_freq_to_band(user_config_freq);
 
-		if (!sta_gc_present && user_config_freq &&
+		if (!ll_sap_freq && !sta_gc_present && user_config_freq &&
 		    op_band < user_band) {
 			curr_sap_freq = op_ch_freq_list[i];
 			policy_mgr_debug("Move sap to user configured freq: %d",
@@ -2117,6 +2127,13 @@ bool policy_mgr_is_sap_restart_required_after_sta_disconnect(
 
 	for (i = 0; i < pcl_len; i++) {
 		if (pcl_channels[i] == curr_sap_freq)
+			continue;
+
+		if (ll_sap_freq &&
+		    wlan_get_opmode_from_vdev_id(pm_ctx->pdev,
+						 sap_vdev_id) == QDF_SAP_MODE &&
+		    policy_mgr_are_2_freq_on_same_mac(psoc, pcl_channels[i],
+						      ll_sap_freq))
 			continue;
 
 		if (!policy_mgr_is_safe_channel(psoc, pcl_channels[i]) ||
@@ -3895,7 +3912,7 @@ void policy_mgr_check_concurrent_intf_and_restart_sap(
 		return;
 	}
 
-	if (policy_mgr_is_ll_lt_sap_restart_required(psoc)) {
+	if (policy_mgr_is_ll_lt_sap_restart_required(psoc, 0)) {
 		restart_sap = true;
 		goto sap_restart;
 	}
@@ -4369,21 +4386,37 @@ static void __policy_mgr_is_ap_start_in_progress(struct wlan_objmgr_pdev *pdev,
 	uint32_t *ap_starting_vdev_id = (uint32_t *)arg;
 	enum wlan_serialization_cmd_type cmd_type;
 	enum QDF_OPMODE op_mode;
+	struct wlan_objmgr_psoc *psoc;
+	uint8_t vdev_id;
 
 	if (!vdev || !ap_starting_vdev_id)
 		return;
 	if (*ap_starting_vdev_id != WLAN_INVALID_VDEV_ID)
 		return;
+	psoc = wlan_pdev_get_psoc(pdev);
+	if (!psoc)
+		return;
+
 	op_mode = wlan_vdev_mlme_get_opmode(vdev);
 	if (op_mode != QDF_SAP_MODE && op_mode != QDF_P2P_GO_MODE &&
 	    op_mode != QDF_NDI_MODE)
 		return;
+
+	vdev_id = wlan_vdev_get_id(vdev);
+	if (policy_mgr_is_vdev_ll_lt_sap(psoc, vdev_id) &&
+	    wlan_ll_sap_is_start_bss_in_progress(psoc, vdev_id)) {
+		*ap_starting_vdev_id = vdev_id;
+		policy_mgr_debug("LL SAP vdev %d op mode %d start bss in progress",
+				 *ap_starting_vdev_id, op_mode);
+		return;
+	}
+
 	/* Check AP start is present in active and pending queue or not */
 	cmd_type = wlan_serialization_get_vdev_active_cmd_type(vdev);
 	if (cmd_type == WLAN_SER_CMD_VDEV_START_BSS ||
 	    wlan_ser_is_non_scan_cmd_type_in_vdev_queue(
 			vdev, WLAN_SER_CMD_VDEV_START_BSS)) {
-		*ap_starting_vdev_id = wlan_vdev_get_id(vdev);
+		*ap_starting_vdev_id = vdev_id;
 		policy_mgr_debug("vdev %d op mode %d start bss is pending",
 				 *ap_starting_vdev_id, op_mode);
 	}

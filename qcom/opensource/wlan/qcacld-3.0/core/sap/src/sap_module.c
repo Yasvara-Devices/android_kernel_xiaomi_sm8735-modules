@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -291,6 +291,8 @@ static void wlansap_owe_cleanup(struct sap_context *sap_ctx)
 			assoc_ind->owe_ie_len = 0;
 			assoc_ind->owe_status = STATUS_UNSPECIFIED_FAILURE;
 			status = sme_update_owe_info(mac, assoc_ind);
+			if (assoc_ind->assocReqPtr)
+				qdf_mem_free(assoc_ind->assocReqPtr);
 			qdf_mem_free(assoc_ind);
 		} else {
 			sap_err("Failed to remove assoc ind");
@@ -339,6 +341,8 @@ static void wlansap_ft_cleanup(struct sap_context *sap_ctx)
 			assoc_ind->ft_ie = NULL;
 			assoc_ind->ft_ie_len = 0;
 			assoc_ind->ft_status = STATUS_UNSPECIFIED_FAILURE;
+			if (assoc_ind->assocReqPtr)
+				qdf_mem_free(assoc_ind->assocReqPtr);
 			qdf_mem_free(assoc_ind);
 		} else {
 			sap_err("Failed to remove assoc ind");
@@ -671,6 +675,7 @@ enum phy_ch_width wlan_sap_get_concurrent_bw(struct wlan_objmgr_pdev *pdev,
 	uint8_t sta_sap_scc_on_dfs_chnl;
 	uint8_t sta_count = 0;
 	bool is_hw_dbs_capable = false;
+	qdf_freq_t ll_sap_freq = 0;
 
 	if (WLAN_REG_IS_24GHZ_CH_FREQ(con_ch_freq))
 		return channel_width;
@@ -689,6 +694,8 @@ enum phy_ch_width wlan_sap_get_concurrent_bw(struct wlan_objmgr_pdev *pdev,
 							    &sta_vdev_id,
 							    con_ch_freq,
 							    &sta_ch_width);
+	ll_sap_freq = policy_mgr_get_ll_lt_sap_freq(psoc);
+
 	if (scc_sta_present) {
 		sta_chan_width = policy_mgr_get_ch_width(sta_ch_width);
 		sap_debug("sta_chan_width:%d, channel_width:%d",
@@ -699,6 +706,11 @@ enum phy_ch_width wlan_sap_get_concurrent_bw(struct wlan_objmgr_pdev *pdev,
 		else if (WLAN_REG_IS_5GHZ_CH_FREQ(con_ch_freq) &&
 			 wlan_reg_is_freq_indoor(pdev, con_ch_freq))
 			is_con_sta_indoor = true;
+	} else if (ll_sap_freq && WLAN_REG_IS_5GHZ_CH_FREQ(con_ch_freq) &&
+		   channel_width == CH_WIDTH_160MHZ) {
+		sap_debug("LL SAP present on freq %d, limit SAP/GO channel to 80 Mhz to avoid DFS MCC",
+			  ll_sap_freq);
+		return CH_WIDTH_80MHZ;
 	}
 
 	policy_mgr_get_sta_sap_scc_on_dfs_chnl(psoc, &sta_sap_scc_on_dfs_chnl);
@@ -1451,7 +1463,11 @@ wlansap_get_csa_chanwidth_from_phymode(struct sap_context *sap_context,
 		if (policy_mgr_is_vdev_ll_lt_sap(mac->psoc,
 						 sap_context->vdev_id) ||
 		    (WLAN_REG_IS_5GHZ_CH_FREQ(chan_freq) &&
-		     !channel_bonding_mode))
+		     !channel_bonding_mode) ||
+		    (policy_mgr_get_sap_force_20mhz_for_country_id(
+						mac->psoc,
+						sap_context->vdev,
+						(qdf_freq_t)chan_freq)))
 			ch_width = CH_WIDTH_20MHZ;
 		else
 			ch_width = wlansap_get_max_bw_by_phymode(sap_context);
@@ -3284,6 +3300,8 @@ QDF_STATUS wlansap_update_owe_info(struct sap_context *sap_ctx,
 		assoc_ind->owe_ie_len = ie_len;
 		assoc_ind->owe_status = owe_status;
 		status = sme_update_owe_info(mac, assoc_ind);
+		if (assoc_ind->assocReqPtr)
+			qdf_mem_free(assoc_ind->assocReqPtr);
 		qdf_mem_free(assoc_ind);
 	} else {
 		/*
@@ -3359,6 +3377,8 @@ QDF_STATUS wlansap_update_ft_info(struct sap_context *sap_ctx,
 		assoc_ind->ft_ie_len = ie_len;
 		assoc_ind->ft_status = ft_status;
 		status = sme_update_ft_info(mac, assoc_ind);
+		if (assoc_ind->assocReqPtr)
+			qdf_mem_free(assoc_ind->assocReqPtr);
 		qdf_mem_free(assoc_ind);
 	}
 	return status;

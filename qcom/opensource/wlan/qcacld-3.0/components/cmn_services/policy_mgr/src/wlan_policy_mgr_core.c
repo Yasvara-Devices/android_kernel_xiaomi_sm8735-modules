@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -1168,6 +1168,9 @@ static uint32_t policy_mgr_dump_current_concurrency_one_connection(
 	case PM_LL_LT_SAP_MODE:
 		count = strlcat(cc_mode, "LT_SAP", length);
 		break;
+	case PM_PASSTHRU_MODE:
+		count = strlcat(cc_mode, "PASSTHRU", length);
+		break;
 	default:
 		policy_mgr_err("unexpected mode %d", mode);
 		break;
@@ -1244,6 +1247,11 @@ static uint32_t policy_mgr_dump_current_concurrency_two_connection(
 				psoc, cc_mode, length);
 		count += strlcat(cc_mode, "+LT_SAP",
 					length);
+		break;
+	case PM_PASSTHRU_MODE:
+		count = policy_mgr_dump_current_concurrency_one_connection(
+				psoc, cc_mode, length);
+		count += strlcat(cc_mode, "+PASSTHRU", length);
 		break;
 	default:
 		policy_mgr_err("unexpected mode %d", mode);
@@ -4452,7 +4460,7 @@ bool
 policy_mgr_if_freq_n_inactive_links_freq_same(struct wlan_objmgr_psoc *psoc,
 					      uint32_t freq)
 {
-	uint32_t sta_count;
+	uint32_t sta_count, i;
 	uint8_t sta_vdev_id_list[MAX_NUMBER_OF_CONC_CONNECTIONS];
 	struct wlan_objmgr_vdev *vdev;
 	bool is_same = false;
@@ -4461,21 +4469,70 @@ policy_mgr_if_freq_n_inactive_links_freq_same(struct wlan_objmgr_psoc *psoc,
 							   sta_vdev_id_list,
 							   PM_STA_MODE);
 
-	if (sta_count != 1)
-		return is_same;
+	for (i = 0; i < sta_count; i++) {
+		vdev = wlan_objmgr_get_vdev_by_id_from_psoc(psoc,
+							    sta_vdev_id_list[i],
+							    WLAN_POLICY_MGR_ID);
+		if (!vdev) {
+			policy_mgr_err("vdev %d not found",
+				       sta_vdev_id_list[i]);
+			continue;
+		}
 
-	vdev = wlan_objmgr_get_vdev_by_id_from_psoc(psoc, sta_vdev_id_list[0],
-						    WLAN_POLICY_MGR_ID);
-	if (!vdev) {
-		policy_mgr_err("vdev %d not found", sta_vdev_id_list[0]);
-		return is_same;
+		is_same = mlo_mgr_if_freq_n_inactive_links_freq_same(vdev,
+								     freq);
+		wlan_objmgr_vdev_release_ref(vdev, WLAN_POLICY_MGR_ID);
+		if (is_same)
+			return is_same;
 	}
 
-	is_same = mlo_mgr_if_freq_n_inactive_links_freq_same(vdev, freq);
-
-	wlan_objmgr_vdev_release_ref(vdev, WLAN_POLICY_MGR_ID);
-
 	return is_same;
+}
+
+/**
+ * policy_mgr_update_band_info_for_p2p() - Check band preference for P2P GO
+ * @pm_ctx: Pointer to pm_ctx
+ * @sap_ch_freq: sap/go channel starting channel frequency
+ * @vdev_id: vdev id
+ * @allow_6ghz: if 6 Ghz can be allowed
+ * @allow_2ghz_only: if only 2.4 Ghz is allowed
+ *
+ * Return: void.
+ */
+static void
+policy_mgr_update_band_info_for_p2p(struct policy_mgr_psoc_priv_obj *pm_ctx,
+				    qdf_freq_t sap_ch_freq,
+				    uint8_t vdev_id, bool *allow_6ghz,
+				    bool *allow_2ghz_only)
+{
+	uint8_t peer_band = 0;
+	qdf_freq_t user_freq;
+
+	user_freq = policy_mgr_get_user_config_sap_freq(pm_ctx->psoc, vdev_id);
+	if (!user_freq)
+		user_freq = sap_ch_freq;
+
+	if (pm_ctx->hdd_cbacks.hdd_get_sap_connected_sta_band)
+		peer_band =
+		 pm_ctx->hdd_cbacks.hdd_get_sap_connected_sta_band(pm_ctx->psoc,
+								   vdev_id);
+	/*
+	 * If peer_band is 0, it mean no peer is connected OR
+	 * peer didn't advertised band info OR GO is starting.
+	 * so allow only the original user or lower bands.
+	 */
+	if (!peer_band) {
+		if (WLAN_REG_IS_24GHZ_CH_FREQ(user_freq))
+			*allow_2ghz_only = true;
+		else if (WLAN_REG_IS_5GHZ_CH_FREQ(user_freq))
+			*allow_6ghz = false;
+	}
+
+	/* If peer_band does not support the band, skip the band */
+	if (peer_band && !(peer_band & BIT(REG_BAND_5G)))
+		*allow_2ghz_only = true;
+	if (peer_band && !(peer_band & BIT(REG_BAND_6G)))
+		*allow_6ghz = false;
 }
 
 /**
@@ -4558,6 +4615,16 @@ policy_mgr_get_pref_force_scc_freq(struct wlan_objmgr_psoc *psoc,
 
 	ll_lt_sap_freq = policy_mgr_get_ll_sap_freq(psoc);
 	is_dbs = policy_mgr_is_hw_dbs_capable(psoc);
+
+	/*
+	 * Update band pref for GO in non-DBS, to avoid GO moving
+	 * to band which is not supported by CLI.
+	 * If CLI is not connected, avoid upgrading the band.
+	 */
+	if (!is_dbs && op_mode == QDF_P2P_GO_MODE)
+		policy_mgr_update_band_info_for_p2p(pm_ctx, sap_ch_freq,
+						    vdev_id, &allow_6ghz,
+						    &allow_2ghz_only);
 
 	/*
 	 * The preferred force SCC channel is SAP original channel,
@@ -4891,9 +4958,9 @@ void policy_mgr_check_scc_channel(struct wlan_objmgr_psoc *psoc,
 							      NULL);
 
 	if (!is_dbs) {
-		if (!sta_count)
+		/* Always fetch new freq if STA or LL SAP is present. */
+		if (!sta_count && !policy_mgr_get_ll_lt_sap_freq(psoc))
 			return;
-
 		/* Fetch new freq using PCL */
 	}
 
@@ -5045,9 +5112,9 @@ policy_mgr_sap_ch_width_update(struct wlan_objmgr_psoc *psoc,
 {
 	QDF_STATUS status = QDF_STATUS_E_FAILURE;
 	struct policy_mgr_psoc_priv_obj *pm_ctx;
-	uint32_t freq;
-	uint8_t sap_vdev_id;
+	uint8_t sap_vdev_id[MAX_NUMBER_OF_CONC_CONNECTIONS];
 	enum phy_ch_width target_bw;
+	uint32_t sap_cnt;
 
 	pm_ctx = policy_mgr_get_context(psoc);
 	if (!pm_ctx) {
@@ -5057,22 +5124,27 @@ policy_mgr_sap_ch_width_update(struct wlan_objmgr_psoc *psoc,
 
 	policy_mgr_debug("action: %d reason: %d", next_action, reason);
 
-	policy_mgr_get_mode_specific_conn_info(psoc, &freq,
-					       &sap_vdev_id,
-					       PM_SAP_MODE);
+	sap_cnt = policy_mgr_get_mode_specific_conn_info(psoc, NULL,
+							 sap_vdev_id,
+							 PM_SAP_MODE);
+	if (!sap_cnt) {
+		policy_mgr_err("sap count is 0!");
+		return status;
+	}
+
 	if (next_action == PM_DOWNGRADE_BW)
 		target_bw = CH_WIDTH_160MHZ;
 	else
 		target_bw = CH_WIDTH_320MHZ;
 
 	status = pm_ctx->sme_cbacks.sme_sap_update_ch_width(psoc,
-							    sap_vdev_id,
+							    sap_vdev_id[0],
 							    target_bw, reason,
 							    conc_vdev_id,
 							    request_id);
 	if (QDF_IS_STATUS_ERROR(status))
 		policy_mgr_err("vdev %d failed to set BW to %d",
-			       sap_vdev_id, target_bw);
+			       sap_vdev_id[0], target_bw);
 
 	return status;
 }

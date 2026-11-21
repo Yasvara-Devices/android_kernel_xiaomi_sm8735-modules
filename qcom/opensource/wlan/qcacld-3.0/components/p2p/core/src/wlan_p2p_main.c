@@ -1973,43 +1973,6 @@ QDF_STATUS p2p_check_and_force_scc_go_plus_go(struct wlan_objmgr_psoc *psoc,
 }
 #endif
 
-void
-p2p_set_mgmt_frm_registration_update(struct wlan_objmgr_psoc *psoc,
-				     uint32_t mgmt_frm_registration_update)
-{
-	struct p2p_soc_priv_obj *p2p_soc_obj;
-
-	p2p_soc_obj = wlan_objmgr_psoc_get_comp_private_obj(psoc,
-							    WLAN_UMAC_COMP_P2P);
-
-	if (!p2p_soc_obj) {
-		p2p_err("p2p soc context is NULL");
-		return;
-	}
-
-	p2p_soc_obj->mgmt_frm_registration_update =
-				mgmt_frm_registration_update;
-}
-
-uint32_t
-p2p_get_mgmt_frm_registration_update(struct wlan_objmgr_psoc *psoc)
-{
-	struct p2p_soc_priv_obj *p2p_soc_obj;
-
-	p2p_soc_obj = wlan_objmgr_psoc_get_comp_private_obj(psoc,
-							    WLAN_UMAC_COMP_P2P);
-
-	if (!p2p_soc_obj) {
-		p2p_err("p2p soc context is NULL");
-		return 0;
-	}
-
-	p2p_debug("get mgmt regis update value %u",
-		  p2p_soc_obj->mgmt_frm_registration_update);
-
-	return p2p_soc_obj->mgmt_frm_registration_update;
-}
-
 #ifdef FEATURE_WLAN_SUPPORT_USD
 QDF_STATUS p2p_send_usd_params(struct wlan_objmgr_psoc *psoc,
 			       struct p2p_usd_attr_params *param)
@@ -2372,4 +2335,40 @@ p2p_set_rand_mac_for_p2p_dev(struct wlan_objmgr_psoc *soc,
 			vdev_id, QDF_MAC_ADDR_REF(mac_addr.bytes), status);
 
 	return status;
+}
+
+#define SINGLE_SHOT_NOA 1
+bool p2p_is_p2p_go_noa_in_progress(struct wlan_objmgr_pdev *pdev,
+				   uint8_t vdev_id)
+{
+	struct wlan_objmgr_vdev *vdev;
+	struct p2p_vdev_priv_obj *p2p_vdev_obj;
+	bool noa_in_prog = false;
+	uint8_t index;
+
+	vdev = wlan_objmgr_get_vdev_by_id_from_pdev(pdev, vdev_id,
+						    WLAN_P2P_ID);
+	if (!vdev) {
+		p2p_debug("Invalid vdev");
+		return noa_in_prog;
+	}
+
+	p2p_vdev_obj = wlan_objmgr_vdev_get_comp_private_obj(
+							vdev,
+							WLAN_UMAC_COMP_P2P);
+	if (!p2p_vdev_obj || !p2p_vdev_obj->noa_info) {
+		p2p_debug("null noa info");
+		goto end;
+	}
+
+	for (index = 0; index < p2p_vdev_obj->noa_info->num_desc; index++) {
+		if (p2p_vdev_obj->noa_info->noa_desc[index].type_count ==
+							SINGLE_SHOT_NOA) {
+			noa_in_prog = true;
+			goto end;
+		}
+	}
+end:
+	wlan_objmgr_vdev_release_ref(vdev, WLAN_P2P_ID);
+	return noa_in_prog;
 }

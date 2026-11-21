@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -61,6 +61,10 @@
 #include "wlan_ipa_ucfg_api.h"
 #include "wlan_hdd_stats.h"
 #include "wlan_psoc_mlme_ucfg_api.h"
+#include "wlan_hdd_wondertap.h"
+#ifdef DRIVER_PASSTHRU_MODE
+#include <net/ieee80211_radiotap.h>
+#endif
 
 #ifdef TX_MULTIQ_PER_AC
 #if defined(QCA_LL_TX_FLOW_CONTROL_V2) || defined(QCA_LL_PDEV_TX_FLOW_CONTROL)
@@ -634,6 +638,37 @@ netdev_tx_t hdd_hard_start_xmit(struct sk_buff *skb, struct net_device *net_dev)
 	return NETDEV_TX_OK;
 }
 
+#if defined(DRIVER_PASSTHRU_MODE)
+netdev_tx_t hdd_hard_start_xmit_passthru(struct sk_buff *skb,
+					 struct net_device *dev)
+{
+	struct hdd_adapter *adapter = WLAN_HDD_GET_PRIV_PTR(dev);
+	QDF_STATUS status;
+
+	if (adapter->device_mode != QDF_PASSTHRU_MODE) {
+		hdd_err("Unsupported Device Mode %d", adapter->device_mode);
+		qdf_assert(0);
+	}
+
+	qdf_mem_zero(skb->cb, sizeof(skb->cb));
+
+	/*
+	 * vdev in link_info is directly dereferenced because this is per
+	 * packet path, hdd_get_vdev_by_user() usage will be very costly
+	 * as it involves lock access.
+	 * Expectation here is vdev will be present during TX/RX processing
+	 * and also DP internally maintaining vdev ref count
+	 */
+	status = ucfg_dp_start_xmit((qdf_nbuf_t)skb, adapter->deflink->vdev);
+	if (QDF_IS_STATUS_SUCCESS(status)) {
+		netif_trans_update(dev);
+		wlan_hdd_sar_unsolicited_timer_start(adapter->hdd_ctx);
+	}
+
+	return NETDEV_TX_OK;
+}
+#endif /* DRIVER_PASSTHRU_MODE */
+
 /**
  * __hdd_tx_timeout() - TX timeout handler
  * @dev: pointer to network device
@@ -671,7 +706,7 @@ static void __hdd_tx_timeout(struct net_device *dev)
 	 * recovery here
 	 */
 
-	for (i = 0; i < NUM_TX_QUEUES; i++) {
+	for (i = 0; i < dev->num_tx_queues; i++) {
 		txq = netdev_get_tx_queue(dev, i);
 		hdd_debug("Queue: %d status: %d txq->trans_start: %lu",
 			  i, netif_tx_queue_stopped(txq), txq->trans_start);
@@ -865,6 +900,16 @@ static inline bool hdd_netdev_queue_is_locked(struct netdev_queue *txq)
 }
 #endif
 
+static void
+hdd_txq_trans_update(struct net_device *dev, struct netdev_queue *txq)
+{
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0))
+	txq_trans_update(dev, txq);
+#else
+	txq_trans_update(txq);
+#endif
+}
+
 /**
  * wlan_hdd_update_txq_timestamp() - update txq timestamp
  * @dev: net device
@@ -876,7 +921,7 @@ static void wlan_hdd_update_txq_timestamp(struct net_device *dev)
 	struct netdev_queue *txq;
 	int i;
 
-	for (i = 0; i < NUM_TX_QUEUES; i++) {
+	for (i = 0; i < dev->num_tx_queues; i++) {
 		txq = netdev_get_tx_queue(dev, i);
 
 		/*
@@ -888,7 +933,7 @@ static void wlan_hdd_update_txq_timestamp(struct net_device *dev)
 		 */
 		if (!hdd_netdev_queue_is_locked(txq)) {
 			if (__netif_tx_trylock(txq)) {
-				txq_trans_update(txq);
+				hdd_txq_trans_update(dev, txq);
 				__netif_tx_unlock(txq);
 			}
 		}
@@ -939,12 +984,13 @@ static void wlan_hdd_update_pause_time(struct hdd_adapter *adapter,
 
 uint32_t
 wlan_hdd_dump_queue_history_state(struct hdd_netif_queue_history *queue_history,
-				  char *buf, uint32_t size)
+				  uint8_t num_tx_queues, char *buf,
+				  uint32_t size)
 {
 	unsigned int i;
 	unsigned int index = 0;
 
-	for (i = 0; i < NUM_TX_QUEUES; i++) {
+	for (i = 0; i < num_tx_queues; i++) {
 		index += qdf_scnprintf(buf + index,
 				       size - index,
 				       "%u:0x%lx ",
@@ -968,12 +1014,9 @@ wlan_hdd_update_queue_history_state(struct net_device *dev,
 				    struct hdd_netif_queue_history *q_hist)
 {
 	unsigned int i = 0;
-	uint32_t num_tx_queues = 0;
 	struct netdev_queue *txq = NULL;
 
-	num_tx_queues = qdf_min(dev->num_tx_queues, (uint32_t)NUM_TX_QUEUES);
-
-	for (i = 0; i < num_tx_queues; i++) {
+	for (i = 0; i < dev->num_tx_queues; i++) {
 		txq = netdev_get_tx_queue(dev, i);
 		q_hist->tx_q_state[i] = txq->state;
 	}
@@ -1352,9 +1395,10 @@ QDF_STATUS wlan_hdd_init_mon_link(struct hdd_context *hdd_ctx,
 		return qdf_status;
 	}
 
-	qdf_status = sme_create_mon_session(hdd_ctx->mac_handle,
-					    sta_desc.peer_addr.bytes,
-					    link_info->vdev_id);
+	qdf_status = sme_create_pe_session(hdd_ctx->mac_handle,
+					   sta_desc.peer_addr.bytes,
+					   link_info->vdev_id,
+					   QDF_MONITOR_MODE);
 	if (QDF_STATUS_SUCCESS != qdf_status) {
 		hdd_err("sme_create_mon_session() failed to register. Status= %d [0x%08X]",
 			qdf_status, qdf_status);

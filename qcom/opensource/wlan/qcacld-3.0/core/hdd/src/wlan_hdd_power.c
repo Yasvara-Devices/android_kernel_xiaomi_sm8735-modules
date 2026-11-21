@@ -92,6 +92,8 @@
 #include <wlan_cp_stats_mc_ucfg_api.h>
 #include "wlan_dp_ucfg_api.h"
 #include "son_api.h"
+#include "wlan_hdd_wondertap.h"
+
 /* Preprocessor definitions and constants */
 #ifdef QCA_WIFI_EMULATION
 #define HDD_SSR_BRING_UP_TIME 3000000
@@ -541,6 +543,13 @@ void hdd_enable_ns_offload(struct hdd_adapter *adapter,
 		goto free_req;
 	}
 
+	ucfg_pmo_set_ns_offload_enable_dynamic(vdev, trigger, true);
+
+	if (!ucfg_pmo_get_ns_offload_enable_dynamic(vdev)) {
+		hdd_debug("NS offload is dynamically disabled");
+		goto free_req;
+	}
+
 	if (ucfg_pmo_get_arp_ns_offload_dynamic_disable(vdev)) {
 		hdd_debug("Dynamic arp ns offload disabled");
 		ucfg_pmo_flush_ns_offload_req(vdev);
@@ -612,6 +621,12 @@ void hdd_disable_ns_offload(struct hdd_adapter *adapter,
 		goto out;
 	}
 
+	if (!ucfg_pmo_get_ns_offload_enable_dynamic(vdev)) {
+		hdd_debug("NS offload is already dynamically disabled");
+		goto out;
+	}
+
+	ucfg_pmo_set_ns_offload_enable_dynamic(vdev, trigger, false);
 	status = ucfg_pmo_disable_ns_offload_in_fwr(vdev, trigger);
 	if (status != QDF_STATUS_SUCCESS)
 		hdd_err("Failed to disable NS Offload");
@@ -1956,6 +1971,8 @@ QDF_STATUS hdd_wlan_shutdown(void)
 					       QDF_SYSTEM_SUSPEND);
 	}
 
+
+	wlan_hdd_wondertap_unregister_ops(hdd_ctx->parent_dev, true);
 	wlan_hdd_rx_thread_resume(hdd_ctx);
 
 	if (ucfg_pkt_capture_get_mode(hdd_ctx->psoc) !=
@@ -1982,8 +1999,6 @@ QDF_STATUS hdd_wlan_shutdown(void)
 	if (soc)
 		cdp_flush_cache_rx_queue(soc);
 
-	/* De-register the HDD callbacks */
-	hdd_deregister_cb(hdd_ctx);
 
 	hdd_wlan_stop_modules(hdd_ctx, false);
 
@@ -3226,10 +3241,18 @@ static int __wlan_hdd_cfg80211_set_txpower(struct wiphy *wiphy,
 	return 0;
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0))
+int wlan_hdd_cfg80211_set_txpower(struct wiphy *wiphy,
+				  struct wireless_dev *wdev,
+				  int radio_idx,
+				  enum nl80211_tx_power_setting type,
+				  int mbm)
+#else
 int wlan_hdd_cfg80211_set_txpower(struct wiphy *wiphy,
 				  struct wireless_dev *wdev,
 				  enum nl80211_tx_power_setting type,
 				  int mbm)
+#endif
 {
 	struct osif_psoc_sync *psoc_sync;
 	int errno;
@@ -3492,7 +3515,13 @@ end:
 	return ret;
 }
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0))
+int wlan_hdd_cfg80211_get_txpower(struct wiphy *wiphy,
+				  struct wireless_dev *wdev,
+				  int radio_idx,
+				  unsigned int link_id,
+				  int *dbm)
+#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0))
 int wlan_hdd_cfg80211_get_txpower(struct wiphy *wiphy,
 				  struct wireless_dev *wdev,
 				  unsigned int link_id,
@@ -3533,6 +3562,8 @@ hdd_convert_opm_mode(enum qca_wlan_vendor_opm_mode opm_mode)
 		return WMA_STA_PS_OPM_AGGRESSIVE;
 	case QCA_WLAN_VENDOR_OPM_MODE_USER_DEFINED:
 		return WMA_STA_PS_USER_DEF;
+	case QCA_WLAN_VENDOR_OPM_MODE_LATENCY_BASED:
+		return WMA_STA_PS_LATENCY_DEF;
 	default:
 		hdd_err("Invalid opm_mode: %d", opm_mode);
 		return WMA_STA_PS_OPM_CONSERVATIVE;
@@ -3552,7 +3583,7 @@ int hdd_set_power_config(struct hdd_context *hddctx,
 		return -EINVAL;
 	}
 
-	if (*opm_mode > QCA_WLAN_VENDOR_OPM_MODE_USER_DEFINED ||
+	if (*opm_mode > QCA_WLAN_VENDOR_OPM_MODE_LATENCY_BASED ||
 	    *opm_mode < QCA_WLAN_VENDOR_OPM_MODE_DISABLE) {
 		hdd_err("invalid power value: %d", *opm_mode);
 		return -EINVAL;
@@ -3574,10 +3605,18 @@ int hdd_set_power_config(struct hdd_context *hddctx,
 }
 
 int hdd_set_power_config_params(struct hdd_context *hddctx,
-				struct hdd_adapter *adapter,
-				uint16_t ps_ito, uint16_t spec_wake)
+				struct hdd_adapter *adapter, uint16_t ps_ito,
+				uint8_t ps_opm_level, uint16_t spec_wake)
 {
 	QDF_STATUS status;
+
+	status =
+	      wma_set_power_config_opm_level(adapter->deflink->vdev_id,
+					     ps_opm_level);
+	if (status != QDF_STATUS_SUCCESS) {
+		hdd_err("failed to configure opm level: %d", status);
+		return -EINVAL;
+	}
 
 	status = wma_set_power_config_ito(adapter->deflink->vdev_id, ps_ito);
 	if (status != QDF_STATUS_SUCCESS) {

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -669,6 +669,16 @@ struct wlan_hdd_peer_info {
 };
 #endif
 
+#define MAX_BCN_HISTORY 10
+
+/**
+ * struct bcn_his_info_stats - beacon rssi history stats
+ * @bcn_history: Beacon real RSSI history array
+ */
+struct bcn_his_info_stats {
+	struct bcn_his_info bcn_history[MAX_BCN_HISTORY];
+};
+
 #define MAX_SUBTYPES_TRACKED	4
 
 struct hdd_stats {
@@ -680,6 +690,7 @@ struct hdd_stats {
 	struct hdd_peer_stats peer_stats;
 	struct hdd_pmf_stats hdd_pmf_stats;
 	struct pmf_bcn_protect_stats bcn_protect_stats;
+	struct bcn_his_info_stats bcn_rssi_his_stats;
 };
 
 /**
@@ -1943,6 +1954,11 @@ enum wlan_state_ctrl_str_id {
 #define MAX_TGT_HW_NAME_LEN 32
 #define HDD_MAX_IFACE_TYPE 2
 
+#ifdef DRIVER_PASSTHRU_MODE
+#define WLAN_HDD_PASSTHRU_CHAN_HOP_CAP_BIT BIT(0)
+#define WLAN_HDD_PASSTHRU_AMPDU_RA_CAP_BIT BIT(1)
+#endif
+
 /**
  * struct hdd_context - hdd shared driver and psoc/device context
  * @psoc: object manager psoc context
@@ -2152,6 +2168,7 @@ enum wlan_state_ctrl_str_id {
  * @get_sta_user_notif: Get station notifier callback to handle port_id on
  *			userspace application close/abort
  * @usd_adapter: adapter on which USD frames to be forwarded to userspace
+ * @passthru_cap_bitmap: passthru capability bitmap
  */
 struct hdd_context {
 	struct wlan_objmgr_psoc *psoc;
@@ -2456,6 +2473,9 @@ struct hdd_context {
 	struct notifier_block get_sta_user_notif;
 #ifdef FEATURE_WLAN_SUPPORT_USD
 	struct hdd_adapter *usd_adapter;
+#endif
+#ifdef DRIVER_PASSTHRU_MODE
+	uint64_t passthru_cap_bitmap;
 #endif
 };
 

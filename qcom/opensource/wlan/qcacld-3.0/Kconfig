@@ -1905,6 +1905,12 @@ config WLAN_FEATURE_LATENCY_SENSITIVE_REO
 	bool "enable WLAN_FEATURE_LATENCY_SENSITIVE_REO"
 	default n
 
+config WLAN_HAPS_ENABLE
+	bool "Enable CONFIG_WLAN_HAPS_ENABLE"
+	default n
+	help
+	This option enables the Host Aware Power Save feature.
+
 config WLAN_CTRL_NAME
 	string "Enable CONFIG_WLAN_CTRL_NAME"
 	default "wlan"
@@ -2480,4 +2486,9 @@ endif
 config DELAYED_REG_FORCE_WRITE
 	bool "Enable Delayed Reg force write"
 	default n
+
+config DRIVER_PASSTHRU_MODE
+	bool "Enable Driver Passthrough mode"
+	default n
+
 endif # QCA_CLD_WLAN

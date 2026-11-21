@@ -1070,9 +1070,25 @@ bool lim_check_disassoc_deauth_ack_pending(struct mac_context *mac,
 
 void lim_pmf_sa_query_timer_handler(void *pMacGlobal, uint32_t param);
 void lim_pmf_comeback_timer_callback(void *context);
+
+/**
+ *
+ * lim_set_protected_bit() - API to set the protected bit in the management
+ * frame.
+ *
+ * @mac: Pointer to Global MAC structure
+ * @pe_session: Pointer to session corresponding to the connection
+ * @peer_mac: Peer address of the STA to which the frame is to be sent
+ * @pMacHdr: Pointer to the frame MAC header
+ *
+ * This function is called by various LIM modules to correctly set
+ * the Protected bit in the Frame Control Field of the 802.11 frame MAC header
+ *
+ * Return: none
+ */
 void lim_set_protected_bit(struct mac_context *mac,
 	struct pe_session *pe_session,
-	tSirMacAddr peer, tpSirMacMgmtHdr pMacHdr);
+	tSirMacAddr peer_mac, tpSirMacMgmtHdr pMacHdr);
 
 void lim_set_ht_caps(struct mac_context *p_mac, uint8_t *p_ie_start,
 		     uint32_t num_bytes);
@@ -2107,6 +2123,50 @@ void lim_update_sta_eht_capable(struct mac_context *mac,
 				tpAddStaParams add_sta_params,
 				tpDphHashNode sta_ds,
 				struct pe_session *session_entry);
+
+#ifdef DRIVER_PASSTHRU_MODE
+/**
+ * lim_update_passthru_config(): Update passthru caps in add sta params
+ * @mac: pointer to MAC context
+ * @add_sta_params: pointer to add sta params
+ * @sta_ds: pointer to dph hash table entry
+ * @session_entry: pointer to PE session
+ *
+ * Return: None
+ */
+void lim_update_passthru_config(struct mac_context *mac,
+				tpAddStaParams add_sta_params,
+				tpDphHashNode sta_ds,
+				struct pe_session *session_entry);
+/**
+ * lim_passthru_mlme_vdev_disconnect_peers() - delete passthru peers
+ * @vdev_mlme:  VDEV MLME comp object
+ * @data_len: data size
+ * @data: event data
+ *
+ * API invokes passthru peer deletion.
+ *
+ * Return: SUCCESS on successful peer deletion
+ *         FAILURE, if it fails due to any
+ */
+QDF_STATUS
+lim_passthru_mlme_vdev_disconnect_peers(struct vdev_mlme_obj *vdev_mlme,
+					uint16_t data_len, void *data);
+#else
+static inline void lim_update_passthru_config(struct mac_context *mac,
+					      tpAddStaParams add_sta_params,
+					      tpDphHashNode sta_ds,
+					      struct pe_session *session_entry)
+{
+}
+
+static inline QDF_STATUS
+lim_passthru_mlme_vdev_disconnect_peers(struct vdev_mlme_obj *vdev_mlme,
+					uint16_t data_len, void *data)
+{
+	return QDF_STATUS_E_INVAL;
+}
+#endif
 
 #ifdef FEATURE_WLAN_TDLS
 /**

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -502,6 +502,21 @@ int wlan_hdd_cfg80211_connected_chan_stats_req(struct wiphy *wiphy,
 					       const void *data,
 					       int data_len);
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 18, 21))
+/**
+ * wlan_hdd_cfg80211_get_station() - get station statistics
+ * @wiphy: Pointer to wiphy
+ * @wdev: Pointer to wireless device
+ * @mac: Pointer to mac
+ * @sinfo: Pointer to station info
+ *
+ * Return: 0 for success, non-zero for failure
+ */
+int wlan_hdd_cfg80211_get_station(struct wiphy *wiphy,
+				  struct wireless_dev *wdev,
+				  const uint8_t *mac,
+				  struct station_info *sinfo);
+#else
 /**
  * wlan_hdd_cfg80211_get_station() - get station statistics
  * @wiphy: Pointer to wiphy
@@ -520,7 +535,24 @@ int wlan_hdd_cfg80211_get_station(struct wiphy *wiphy,
 				  struct net_device *dev, uint8_t *mac,
 				  struct station_info *sinfo);
 #endif
+#endif
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 18, 21))
+/**
+ * wlan_hdd_cfg80211_dump_station() - dump station statistics
+ * @wiphy: Pointer to wiphy
+ * @wdev: Pointer to wireless device
+ * @idx: variable to determine whether to get stats or not
+ * @mac: Pointer to mac
+ * @sinfo: Pointer to station info
+ *
+ * Return: 0 for success, non-zero for failure
+ */
+int wlan_hdd_cfg80211_dump_station(struct wiphy *wiphy,
+				   struct wireless_dev *wdev,
+				   int idx, u8 *mac,
+				   struct station_info *sinfo);
+#else
 /**
  * wlan_hdd_cfg80211_dump_station() - dump station statistics
  * @wiphy: Pointer to wiphy
@@ -532,9 +564,10 @@ int wlan_hdd_cfg80211_get_station(struct wiphy *wiphy,
  * Return: 0 for success, non-zero for failure
  */
 int wlan_hdd_cfg80211_dump_station(struct wiphy *wiphy,
-				struct net_device *dev,
-				int idx, u8 *mac,
-				struct station_info *sinfo);
+				   struct net_device *dev,
+				   int idx, u8 *mac,
+				   struct station_info *sinfo);
+#endif
 
 struct net_device_stats *hdd_get_stats(struct net_device *dev);
 
@@ -544,6 +577,34 @@ int wlan_hdd_cfg80211_dump_survey(struct wiphy *wiphy,
 
 void hdd_display_hif_stats(void);
 void hdd_clear_hif_stats(void);
+
+/**
+ * wlan_hdd_reset_bcn_rssi_history_stats() - reset beacon rssi history
+ * stats in link info
+ * @link_info: link info
+ *
+ * Return: void
+ */
+void wlan_hdd_reset_bcn_rssi_history_stats(
+		struct wlan_hdd_link_info *link_info);
+
+/**
+ * wlan_hdd_get_station_bcn_rssi_history() - Retrieves the beacon RSSI
+ * history for a station.
+ *
+ * @link_info: Pointer to the wlan_hdd_link_info structure containing
+ * the link information.
+ * @bcn_rssi_stats: Pointer to the bcn_his_info_stats structure to store
+ * the beacon RSSI history.
+ *
+ * This function retrieves the beacon RSSI history for a station and
+ * stores it in the provided bcn_his_info_stats structure.
+ *
+ * Return: 0 on success, negative value on failure.
+ */
+int wlan_hdd_get_station_bcn_rssi_history(
+			struct wlan_hdd_link_info *link_info,
+			struct bcn_his_info_stats *bcn_rssi_stats);
 
 /**
  * wlan_hdd_cfg80211_stats_ext_callback() - ext stats callback
@@ -972,11 +1033,14 @@ hdd_tx_latency_record_ingress_ts(struct hdd_adapter *adapter,
  * @buff: Buffer to be sent
  * @len: length of the buffer
  * @type: Chipset stats type
+ * @is_logging_enable: Indicates whether chipset stats debug logging is enabled
+ * via the INI configuration
  *
  * Return: 0 on success -ve value on error
  */
 int hdd_cstats_send_data_to_userspace(char *buff, unsigned int len,
-				      enum cstats_types type);
+				      enum cstats_types type,
+				      bool is_logging_enable);
 
 /**
  * hdd_register_cstats_ops() - Register chipset stats ops
@@ -1026,7 +1090,8 @@ static inline void hdd_register_cstats_ops(void)
 
 static inline int
 hdd_cstats_send_data_to_userspace(char *buff, unsigned int len,
-				  enum cstats_types type)
+				  enum cstats_types type,
+				  bool is_logging_enable)
 {
 	return 0;
 }

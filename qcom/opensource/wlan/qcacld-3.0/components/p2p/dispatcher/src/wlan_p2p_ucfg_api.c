@@ -755,20 +755,6 @@ ucfg_is_p2p_device_dynamic_set_mac_addr_supported(struct wlan_objmgr_psoc *psoc)
 }
 #endif
 
-void
-ucfg_p2p_set_mgmt_frm_registration_update(struct wlan_objmgr_psoc *psoc,
-					  uint32_t mgmt_frm_registration_update)
-{
-	p2p_set_mgmt_frm_registration_update(psoc,
-					     mgmt_frm_registration_update);
-}
-
-uint32_t
-ucfg_p2p_get_mgmt_frm_registration_update(struct wlan_objmgr_psoc *psoc)
-{
-	return p2p_get_mgmt_frm_registration_update(psoc);
-}
-
 #ifdef FEATURE_WLAN_SUPPORT_USD
 QDF_STATUS ucfg_p2p_send_usd_params(struct wlan_objmgr_psoc *psoc,
 				    struct p2p_usd_attr_params *param)
@@ -863,4 +849,10 @@ QDF_STATUS
 ucfg_p2p_force_restrict_dfs_go_csa(struct wlan_objmgr_vdev *vdev, bool val)
 {
 	return p2p_force_restrict_dfs_go_csa(vdev, val);
+}
+
+bool ucfg_p2p_is_p2p_go_noa_in_progress(struct wlan_objmgr_pdev *pdev,
+					uint8_t vdev_id)
+{
+	return p2p_is_p2p_go_noa_in_progress(pdev, vdev_id);
 }

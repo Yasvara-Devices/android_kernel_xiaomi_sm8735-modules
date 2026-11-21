@@ -227,6 +227,9 @@
 #include "wlan_p2p_ucfg_api.h"
 #include "wlan_cfg80211_p2p.h"
 #include "wlan_ll_sap_api.h"
+#ifdef WLAN_FEATURE_DNW
+#include "wlan_dnw_ucfg_api.h"
+#endif
 
 /*
  * A value of 100 (milliseconds) can be sent to FW.
@@ -853,6 +856,24 @@ static const struct ieee80211_iface_limit
 	},
 };
 
+/*
+ * Monitor / Passthru with max_interfaces=2 so it is not filtered out on
+ * non-DBS and 1x1-DBS targets by the max_interfaces > 2 check in
+ * wlan_hdd_update_iface_combination(). Covers standalone monitor and
+ * STA + monitor concurrency on those targets.
+ */
+static const struct ieee80211_iface_limit
+	wlan_hdd_mon_sta_iface_limit[] = {
+	{
+		.max = 1,
+		.types = BIT(NL80211_IFTYPE_MONITOR),
+	},
+	{
+		.max = 1,
+		.types = BIT(NL80211_IFTYPE_STATION),
+	},
+};
+
 #if defined(WLAN_FEATURE_NAN) && \
 	   (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0))
 /* STA + STA + SAP + NAN */
@@ -907,6 +928,32 @@ static const struct ieee80211_iface_limit
 		.max = 1,
 		.types = BIT(NL80211_IFTYPE_P2P_GO) |
 			 BIT(NL80211_IFTYPE_P2P_CLIENT),
+	},
+};
+
+/* STA + NAN + P2P + MON. NAN represents NAN disc+NDI support */
+static const struct ieee80211_iface_limit
+	wlan_hdd_sta_nan_p2p_mon_iface_limit[] = {
+	{
+		/* STA */
+		.max = 1,
+		.types = BIT(NL80211_IFTYPE_STATION)
+	},
+	{
+		/* NAN */
+		.max = 1,
+		.types = BIT(NL80211_IFTYPE_NAN),
+	},
+	{
+		/* P2P */
+		.max = 1,
+		.types = BIT(NL80211_IFTYPE_P2P_GO) |
+			 BIT(NL80211_IFTYPE_P2P_CLIENT),
+	},
+	{
+		/* MONITOR/PASSTHRU */
+		.max = 1,
+		.types = BIT(NL80211_IFTYPE_MONITOR),
 	},
 };
 
@@ -1018,6 +1065,13 @@ static struct ieee80211_iface_combination
 		.num_different_channels = 2,
 		.n_limits = ARRAY_SIZE(wlan_hdd_mon_iface_limit),
 	},
+	/* Monitor / Passthru (non-DBS and 1x1-DBS safe) */
+	{
+		.limits = wlan_hdd_mon_sta_iface_limit,
+		.max_interfaces = 2,
+		.num_different_channels = 2,
+		.n_limits = ARRAY_SIZE(wlan_hdd_mon_sta_iface_limit),
+	},
 #if defined(WLAN_FEATURE_NAN) && \
 	   (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0))
 	/* STA + STA + SAP + NAN*/
@@ -1041,6 +1095,13 @@ static struct ieee80211_iface_combination
 		.max_interfaces = 4,
 		.num_different_channels = 3,
 		.n_limits = ARRAY_SIZE(wlan_hdd_sta_nan_p2p_iface_limit),
+	},
+	/* NAN + STA + P2P + MON. NAN represents NAN disc+NDI support */
+	{
+		.limits = wlan_hdd_sta_nan_p2p_mon_iface_limit,
+		.max_interfaces = 4,
+		.num_different_channels = 3,
+		.n_limits = ARRAY_SIZE(wlan_hdd_sta_nan_p2p_mon_iface_limit),
 	},
 	/* NAN + SAP */
 	{
@@ -5330,6 +5391,20 @@ static inline void wlan_hdd_set_usd_feature(struct wlan_objmgr_psoc *psoc,
 }
 #endif
 
+static inline void wlan_hdd_set_cancel_noa_feature(struct wlan_objmgr_psoc *psoc,
+						   uint8_t *feature_flags)
+{
+	if (!ucfg_p2p_is_fw_cancel_one_shot_noa_supported(psoc)) {
+		hdd_debug("cancel one shot noa feature is not supported by FW");
+		return;
+	}
+
+	wlan_cfg80211_set_feature(feature_flags,
+				  QCA_WLAN_VENDOR_FEATURE_SUPPORT_P2P_GO_CANCEL_ONE_SHOT_NOA);
+	wlan_cfg80211_set_feature(feature_flags,
+				  QCA_WLAN_VENDOR_FEATURE_SUPPORT_P2P_GC_KEEP_AWAKE_DURING_ONE_SHOT_NOA);
+}
+
 static inline void wlan_hdd_set_mrsno_feature(struct wlan_objmgr_psoc *psoc,
 					      uint8_t *feature_flags)
 {
@@ -5466,6 +5541,7 @@ __wlan_hdd_cfg80211_get_features(struct wiphy *wiphy,
 	wlan_wifi_pos_cfg80211_set_features(hdd_ctx->psoc, feature_flags);
 	wlan_hdd_set_ll_lt_sap_feature(hdd_ctx->psoc, feature_flags);
 	wlan_hdd_set_usd_feature(hdd_ctx->psoc, feature_flags);
+	wlan_hdd_set_cancel_noa_feature(hdd_ctx->psoc, feature_flags);
 	wlan_hdd_set_mrsno_feature(hdd_ctx->psoc, feature_flags);
 
 	skb = wlan_cfg80211_vendor_cmd_alloc_reply_skb(wiphy,
@@ -8499,7 +8575,7 @@ __wlan_hdd_cfg80211_get_logger_supp_feature(struct wiphy *wiphy,
 	int status;
 	uint32_t features;
 	struct sk_buff *reply_skb = NULL;
-	bool enable_ring_buffer;
+	uint32_t enable_ring_buffer;
 
 	hdd_enter_dev(wdev->netdev);
 
@@ -8875,6 +8951,10 @@ const struct nla_policy wlan_hdd_wifi_config_policy[
 	[QCA_WLAN_VENDOR_ATTR_CONFIG_OPM_ITO] = {.type = NLA_U16 },
 	[QCA_WLAN_VENDOR_ATTR_CONFIG_OPM_SPEC_WAKE_INTERVAL] = {
 		.type = NLA_U16 },
+	[QCA_WLAN_VENDOR_ATTR_CONFIG_OPM_LEVEL] = {
+		.type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_CONFIG_OPM_LATENCY_TOLERANCE] = {
+		.type = NLA_U16 },
 	[QCA_WLAN_VENDOR_ATTR_CONFIG_UDP_QOS_UPGRADE] = {
 		.type = NLA_U8 },
 	[QCA_WLAN_VENDOR_ATTR_CONFIG_NUM_TX_CHAINS] = {.type = NLA_U8 },
@@ -8947,6 +9027,10 @@ const struct nla_policy wlan_hdd_wifi_config_policy[
 		.type = NLA_U8},
 	[QCA_WLAN_VENDOR_ATTR_CONFIG_DFS_OWNER_DISABLE] = {
 		.type = NLA_U8},
+#ifdef WLAN_FEATURE_DNW
+	[QCA_WLAN_VENDOR_ATTR_CONFIG_DFS_NO_WAIT_SUPPORT] = {
+		.type = NLA_U8},
+#endif
 };
 
 
@@ -10726,6 +10810,8 @@ hdd_vendor_opm_to_pmo_opm(enum qca_wlan_vendor_opm_mode opm_mode)
 		return PMO_PS_ADVANCED_POWER_SAVE_ENABLE;
 	case QCA_WLAN_VENDOR_OPM_MODE_USER_DEFINED:
 		return PMO_PS_ADVANCED_POWER_SAVE_USER_DEFINED;
+	case QCA_WLAN_VENDOR_OPM_MODE_LATENCY_BASED:
+		return PMO_PS_ADVANCED_POWER_SAVE_LATENCY_BASED;
 	default:
 		hdd_debug("Invalid opm_mode: %d", opm_mode);
 		return PMO_PS_ADVANCED_POWER_SAVE_DISABLE;
@@ -10740,6 +10826,7 @@ static int hdd_config_power(struct wlan_hdd_link_info *link_info,
 	struct wlan_objmgr_vdev *vdev;
 	enum qca_wlan_vendor_opm_mode opm_mode;
 	struct pmo_ps_params ps_params = {0};
+	struct pmo_ps_params curr_ps_params = {0};
 	struct nlattr *power_attr =
 		tb[QCA_WLAN_VENDOR_ATTR_CONFIG_QPOWER];
 	struct nlattr *opm_attr =
@@ -10748,7 +10835,11 @@ static int hdd_config_power(struct wlan_hdd_link_info *link_info,
 		tb[QCA_WLAN_VENDOR_ATTR_CONFIG_OPM_ITO];
 	struct nlattr *spec_wake_attr =
 		tb[QCA_WLAN_VENDOR_ATTR_CONFIG_OPM_SPEC_WAKE_INTERVAL];
-	int ret;
+	struct nlattr *ps_opm_level_attr =
+		tb[QCA_WLAN_VENDOR_ATTR_CONFIG_OPM_LEVEL];
+	struct nlattr *ps_latency_tolerance_attr =
+		tb[QCA_WLAN_VENDOR_ATTR_CONFIG_OPM_LATENCY_TOLERANCE];
+	int ret = 0;
 
 	hdd_enter_dev(adapter->dev);
 
@@ -10778,29 +10869,18 @@ static int hdd_config_power(struct wlan_hdd_link_info *link_info,
 		}
 	}
 
+	if (opm_mode == QCA_WLAN_VENDOR_OPM_MODE_LATENCY_BASED) {
+		if (!ps_opm_level_attr || !ps_latency_tolerance_attr) {
+			hdd_err_rl("Invalid Latency enabled OPM attributes");
+			return -EINVAL;
+		}
+	}
+
 	ret = hdd_set_power_config(hdd_ctx, adapter, &opm_mode);
 	if (ret)
 		return ret;
 
 	ps_params.opm_mode = hdd_vendor_opm_to_pmo_opm(opm_mode);
-	if (opm_mode == QCA_WLAN_VENDOR_OPM_MODE_USER_DEFINED) {
-		ps_params.ps_ito = nla_get_u16(ps_ito_attr);
-		ps_params.spec_wake = nla_get_u16(spec_wake_attr);
-
-		if (!ps_params.ps_ito)
-			return -EINVAL;
-
-		hdd_debug("ps_ito %d spec_wake %d opm_mode %d",
-			  ps_params.ps_ito, ps_params.spec_wake,
-			  ps_params.opm_mode);
-
-		ret = hdd_set_power_config_params(hdd_ctx, adapter,
-						  ps_params.ps_ito,
-						  ps_params.spec_wake);
-
-		if (ret)
-			return ret;
-	}
 
 	vdev = hdd_objmgr_get_vdev_by_user(link_info, WLAN_OSIF_POWER_ID);
 	if (!vdev) {
@@ -10808,13 +10888,73 @@ static int hdd_config_power(struct wlan_hdd_link_info *link_info,
 		return 0;
 	}
 
-	if (opm_mode == QCA_WLAN_VENDOR_OPM_MODE_USER_DEFINED)
-		ucfg_pmo_set_ps_params(vdev, &ps_params);
-	else
-		ucfg_pmo_core_vdev_set_ps_opm_mode(vdev, ps_params.opm_mode);
+	if ((opm_mode == QCA_WLAN_VENDOR_OPM_MODE_USER_DEFINED) ||
+	    (opm_mode == QCA_WLAN_VENDOR_OPM_MODE_LATENCY_BASED))
+		ucfg_pmo_get_ps_params(vdev, &curr_ps_params);
 
+	if (opm_mode == QCA_WLAN_VENDOR_OPM_MODE_USER_DEFINED) {
+		ps_params.ps_ito = nla_get_u16(ps_ito_attr);
+		ps_params.spec_wake = nla_get_u16(spec_wake_attr);
+		ps_params.ps_opm_level = curr_ps_params.ps_opm_level;
+
+		if (!ps_params.ps_ito) {
+			ret = -EINVAL;
+			goto err;
+		}
+
+		hdd_debug("ps_ito %d spec_wake %d opm_mode %d",
+			  ps_params.ps_ito, ps_params.spec_wake,
+			  ps_params.opm_mode);
+
+		ret = hdd_set_power_config_params(hdd_ctx, adapter,
+						  ps_params.ps_ito,
+						  ps_params.ps_opm_level,
+						  ps_params.spec_wake);
+
+		if (ret)
+			goto err;
+
+		ucfg_dp_haps_set_fail_safe_timeout(adapter->dev, false,
+						   ps_params.spec_wake);
+	}
+
+	if (opm_mode == QCA_WLAN_VENDOR_OPM_MODE_LATENCY_BASED) {
+		ps_params.ps_opm_level = nla_get_u8(ps_opm_level_attr);
+		ps_params.spec_wake = nla_get_u16(ps_latency_tolerance_attr);
+		ps_params.ps_ito = curr_ps_params.ps_ito;
+
+		if (!ps_params.ps_opm_level) {
+			ret = -EINVAL;
+			goto err;
+		}
+
+		hdd_debug("ps_opm_level %d latency_tolerance %d opm_mode %d",
+			  ps_params.ps_opm_level, ps_params.spec_wake,
+			  ps_params.opm_mode);
+
+		ret = hdd_set_power_config_params(hdd_ctx, adapter,
+						  ps_params.ps_ito,
+						  ps_params.ps_opm_level,
+						  ps_params.spec_wake);
+
+		if (ret)
+			goto err;
+
+		ucfg_dp_haps_set_fail_safe_timeout(adapter->dev, false,
+						   ps_params.spec_wake);
+	}
+
+	if ((opm_mode == QCA_WLAN_VENDOR_OPM_MODE_USER_DEFINED) ||
+	    (opm_mode == QCA_WLAN_VENDOR_OPM_MODE_LATENCY_BASED)) {
+		ucfg_pmo_set_ps_params(vdev, &ps_params);
+	} else {
+		ucfg_pmo_core_vdev_set_ps_opm_mode(vdev, ps_params.opm_mode);
+		ucfg_dp_haps_set_fail_safe_timeout(adapter->dev, true, 0);
+	}
+
+err:
 	hdd_objmgr_put_vdev_by_user(vdev, WLAN_OSIF_POWER_ID);
-	return 0;
+	return ret;
 }
 
 static int hdd_config_stats_avg_factor(struct wlan_hdd_link_info *link_info,
@@ -13044,6 +13184,40 @@ static int hdd_get_dfs_owner_disable(struct wlan_hdd_link_info *link_info,
 	return 0;
 }
 
+#ifdef WLAN_FEATURE_DNW
+/**
+ * hdd_config_dfs_no_wait_support() - Config DFS No Wait support
+ * @link_info: Link info pointer in HDD adapter
+ * @attr: pointer to nla attr
+ *
+ * Return: 0 on success, negative on failure
+ */
+static int hdd_config_dfs_no_wait_support(struct wlan_hdd_link_info *link_info,
+					  const struct nlattr *attr)
+{
+	uint8_t support_dnw;
+	struct hdd_context *hdd_ctx = WLAN_HDD_GET_CTX(link_info->adapter);
+	int errno;
+
+	errno = wlan_hdd_validate_context(hdd_ctx);
+	if (errno)
+		return errno;
+	support_dnw = nla_get_u8(attr);
+
+	hdd_debug("configure dnw %d", support_dnw);
+	ucfg_set_dfs_no_wait_support(hdd_ctx->psoc, support_dnw);
+
+	return 0;
+}
+#else
+static inline int
+hdd_config_dfs_no_wait_support(struct wlan_hdd_link_info *link_info,
+			       const struct nlattr *attr)
+{
+	return 0;
+}
+#endif
+
 #ifdef WLAN_FEATURE_11BE
 /**
  * hdd_set_eht_emlsr_capability() - Set EMLSR capability for EHT STA
@@ -13571,6 +13745,10 @@ static const struct independent_setters independent_setters[] = {
 	 hdd_reset_btm_abridge_flag},
 	{QCA_WLAN_VENDOR_ATTR_CONFIG_DFS_OWNER_DISABLE,
 	 hdd_set_dfs_owner_disable},
+#ifdef WLAN_FEATURE_DNW
+	{QCA_WLAN_VENDOR_ATTR_CONFIG_DFS_NO_WAIT_SUPPORT,
+	 hdd_config_dfs_no_wait_support},
+#endif
 };
 
 #ifdef WLAN_FEATURE_ELNA
@@ -16443,6 +16621,7 @@ static int __wlan_hdd_cfg80211_wifi_logger_start(struct wiphy *wiphy,
 	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_WIFI_LOGGER_START_MAX + 1];
 	struct sir_wifi_start_log start_log = { 0 };
 	mac_handle_t mac_handle;
+	uint32_t enable_ring_buffer;
 
 	hdd_enter_dev(wdev->netdev);
 
@@ -16501,6 +16680,18 @@ static int __wlan_hdd_cfg80211_wifi_logger_start(struct wiphy *wiphy,
 	start_log.is_pktlog_buff_clear = false;
 
 	cds_set_ring_log_level(start_log.ring_id, start_log.verbose_level);
+
+	/* Get enable_ring_buffer INI value */
+	wlan_mlme_get_status_ring_buffer(hdd_ctx->psoc, &enable_ring_buffer);
+
+	/* Check if ring buffer is supported based on INI and verbose level */
+	if (enable_ring_buffer == 2) {
+		if (start_log.verbose_level <= LOG_LEVEL_NORMAL_COLLECT) {
+			hdd_debug("Ring buffer not supported for ring_id: %d, verbose_level: %d",
+				  start_log.ring_id, start_log.verbose_level);
+			return -EOPNOTSUPP;
+		}
+	}
 
 	if (start_log.ring_id == RING_ID_WAKELOCK) {
 		/* Start/stop wakelock events */
@@ -16600,6 +16791,8 @@ static int __wlan_hdd_cfg80211_wifi_logger_get_ring_data(struct wiphy *wiphy,
 	struct hdd_context *hdd_ctx = wiphy_priv(wiphy);
 	struct nlattr *tb
 		[QCA_WLAN_VENDOR_ATTR_WIFI_LOGGER_GET_RING_DATA_MAX + 1];
+	uint32_t enable_ring_buffer;
+	uint32_t verbose_level;
 
 	hdd_enter();
 
@@ -16628,6 +16821,23 @@ static int __wlan_hdd_cfg80211_wifi_logger_get_ring_data(struct wiphy *wiphy,
 
 	ring_id = nla_get_u32(
 			tb[QCA_WLAN_VENDOR_ATTR_WIFI_LOGGER_GET_RING_DATA_ID]);
+
+	/* Get enable_ring_buffer INI value */
+	wlan_mlme_get_status_ring_buffer(hdd_ctx->psoc, &enable_ring_buffer);
+
+	/* Check if ring buffer logging is enabled based on INI and
+	 * verbose level
+	 */
+	if (enable_ring_buffer == 2) {
+		/* Get the current verbose level for the ring */
+		verbose_level = cds_get_ring_log_level(ring_id);
+
+		if (verbose_level <= LOG_LEVEL_NORMAL_COLLECT) {
+			hdd_debug("Ring buffers are not enabled for ring_id: %d",
+				  ring_id);
+			return -EINVAL;
+		}
+	}
 
 	if (ring_id == RING_ID_PER_PACKET_STATS) {
 		wlan_logging_set_per_pkt_stats();
@@ -21068,6 +21278,7 @@ hdd_fill_usable_channels_data(struct sk_buff *skb, struct nlattr **tb,
 		nla_nest_end(skb, chan_params);
 	}
 	nla_nest_end(skb, config);
+	hdd_debug("valid usable channel count : %d", j);
 	return 0;
 }
 
@@ -21302,7 +21513,6 @@ static int __wlan_hdd_cfg80211_get_usable_channel(struct wiphy *wiphy,
 		ret = -EINVAL;
 		goto err;
 	}
-	hdd_debug("usable channel count : %d", count);
 
 	ret = hdd_send_usable_channel(hdd_ctx, res_msg, count, tb);
 	if (ret) {
@@ -23361,6 +23571,7 @@ const struct wiphy_vendor_command hdd_wiphy_vendor_commands[] = {
 
 	FEATURE_P2P_SECURE_USD_VENDOR_COMMANDS
 	FEATURE_P2P_SET_MODE_VENDOR_COMMANDS
+	FEATURE_P2P_SET_NOA_VENDOR_COMMANDS
 
 	FEATURE_SAP_COND_CHAN_SWITCH_VENDOR_COMMANDS
 	{
@@ -24989,29 +25200,59 @@ static bool wlan_hdd_is_sta_p2p_concurrency_present(
 /**
  * wlan_hdd_is_p2p_nan_sta_conc_present() - This API checks whether P2P
  * NAN and STA present in the interface combination
+ * @combination: interface combination array to refer
  * @idx: index for interface combination array
  *
  * Return: true if P2P + NAN + STA interface is present otherwise false
  */
-static bool wlan_hdd_is_p2p_nan_sta_conc_present(uint8_t idx)
+static bool wlan_hdd_is_p2p_nan_sta_conc_present(
+			struct ieee80211_iface_combination *combination,
+			uint8_t idx)
 {
 	int j = 0;
 	bool p2p_present = false, nan_present = false, sta_present = false;
 
-	for (j = 0; j < wlan_hdd_iface_combination[idx].n_limits; j++) {
-		if (wlan_hdd_iface_combination[idx].limits[j].types ==
+	for (j = 0; j < combination[idx].n_limits; j++) {
+		if (combination[idx].limits[j].types ==
 		    BIT(NL80211_IFTYPE_NAN))
 			nan_present = true;
-		else if (wlan_hdd_iface_combination[idx].limits[j].types ==
+		else if (combination[idx].limits[j].types ==
 				(BIT(NL80211_IFTYPE_P2P_CLIENT) |
 				 BIT(NL80211_IFTYPE_P2P_GO)))
 			p2p_present = true;
-		else if (wlan_hdd_iface_combination[idx].limits[j].types ==
+		else if (combination[idx].limits[j].types ==
 				 BIT(NL80211_IFTYPE_STATION))
 			sta_present = true;
 	}
 
 	return (nan_present && p2p_present && sta_present);
+}
+
+/**
+ * wlan_hdd_is_p2p_nan_sta_mon_conc_present() - This API checks whether P2P
+ * NAN, STA and MONITOR present in the interface combination
+ * @combination: interface combination array to refer
+ * @idx: index for interface combination array
+ *
+ * Return: true if P2P + NAN + STA + MON interface is present otherwise false
+ */
+static bool wlan_hdd_is_p2p_nan_sta_mon_conc_present(
+			struct ieee80211_iface_combination *combination,
+			uint8_t idx)
+{
+	int j = 0;
+	bool mon_present = false;
+
+	for (j = 0; j < combination[idx].n_limits; j++) {
+		if (combination[idx].limits[j].types ==
+		    BIT(NL80211_IFTYPE_MONITOR)) {
+			mon_present = true;
+			break;
+		}
+	}
+
+	return (mon_present &&
+		wlan_hdd_is_p2p_nan_sta_conc_present(combination, idx));
 }
 
 /**
@@ -25044,7 +25285,8 @@ static bool wlan_hdd_is_p2p_concurrency_present(bool sta_sap_p2p_concurrency,
 		return false;
 
 	if (sta_p2p_ndp_concurrency &&
-	    wlan_hdd_is_p2p_nan_sta_conc_present(idx))
+	    wlan_hdd_is_p2p_nan_sta_conc_present(wlan_hdd_iface_combination,
+						 idx))
 		return false;
 
 	return true;
@@ -25115,6 +25357,29 @@ wlan_hdd_remove_sta_p2p_conc(struct ieee80211_iface_combination *combination,
 	return 0;
 }
 
+static uint8_t
+wlan_hdd_remove_sta_p2p_nan_conc(
+			struct ieee80211_iface_combination *combination,
+			uint8_t filled)
+{
+	uint8_t i = 0;
+	bool found = false;
+
+	for (i = 0; i < filled; i++)
+		if (wlan_hdd_is_p2p_nan_sta_conc_present(combination, i)) {
+			found = true;
+			break;
+		}
+
+	if (found) {
+		for (; i < filled - 1; i++)
+			combination[i] = combination[i + 1];
+		return 1;
+	}
+
+	return 0;
+}
+
 /**
  * wlan_hdd_is_iface_nan() - This API checks whether NAN interface is present
  * in the interface combination
@@ -25158,6 +25423,9 @@ static void wlan_hdd_update_iface_combination(struct hdd_context *hdd_ctx,
 	uint8_t num;
 	QDF_STATUS status;
 	bool is_nan_allowed;
+	struct wmi_unified *wmi_handle;
+
+	wmi_handle = get_wmi_unified_hdl_from_psoc(psoc);
 
 	if (!hdd_ctx->config->advertise_concurrent_operation)
 		return;
@@ -25220,7 +25488,17 @@ static void wlan_hdd_update_iface_combination(struct hdd_context *hdd_ctx,
 		    wlan_hdd_is_sap_sta_nan_concurrency_present(i))
 			continue;
 
-		if (sap_sta_nan_concurrency) {
+		/**
+		 * Enabling sap_sta_nan_concurrency will remove existing
+		 * STA + NAN and SAP + NAN configurations.
+		 * For non-DBS cases, it will not add STA + SAP + NAN
+		 * as the interface count exceeds two.
+		 * However, it will still remove STA + NAN and SAP + NAN.
+		 * Below check is to prevent removing STA + NAN and SAP + NAN
+		 * if non-DBS is present.
+		 */
+		if (sap_sta_nan_concurrency &&
+		    ucfg_policy_mgr_is_fw_supports_dbs(psoc)) {
 			/* remove STA NAN concurrency */
 			if (wlan_hdd_is_sta_nan_concurrency_present(
 					wlan_hdd_iface_combination, i))
@@ -25235,17 +25513,32 @@ static void wlan_hdd_update_iface_combination(struct hdd_context *hdd_ctx,
 		 * STA + P2P + NDP concurrency is not supported
 		 */
 		if (!ucfg_nan_is_sta_p2p_ndp_supported(hdd_ctx->psoc) &&
-		    wlan_hdd_is_p2p_nan_sta_conc_present(i))
+		    (wlan_hdd_is_p2p_nan_sta_conc_present(
+					wlan_hdd_iface_combination, i) ||
+		    wlan_hdd_is_p2p_nan_sta_mon_conc_present(
+					wlan_hdd_iface_combination, i)))
 			continue;
 
 		/* STA + P2P + NAN concurrency is present */
-		if (wlan_hdd_is_p2p_nan_sta_conc_present(i)) {
+		if (wlan_hdd_is_p2p_nan_sta_conc_present(wlan_hdd_iface_combination,
+							 i)) {
 			/* Remove STA NAN 2-iface sub concurrency */
 			j -= wlan_hdd_remove_sta_nan_conc(hdd_ctx->combination,
 							  j);
 			/* Remove STA P2P 2-iface sub concurrency */
 			j -= wlan_hdd_remove_sta_p2p_conc(hdd_ctx->combination,
 							  j);
+		}
+
+		if (wlan_hdd_is_p2p_nan_sta_mon_conc_present(wlan_hdd_iface_combination,
+							     i)) {
+			if (wmi_handle &&
+			    wmi_service_enabled(wmi_handle,
+						wmi_service_passthru_vdev_chan_hop_schedule_support))
+				j -= wlan_hdd_remove_sta_p2p_nan_conc(hdd_ctx->combination,
+								      j);
+			else
+				continue;
 		}
 
 		hdd_ctx->combination[j] = wlan_hdd_iface_combination[i];
@@ -26483,6 +26776,47 @@ static int __wlan_hdd_change_station(struct wiphy *wiphy,
 	return ret;
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 18, 21))
+/**
+ * wlan_hdd_change_station() - cfg80211 change station handler function
+ * @wiphy: Pointer to the wiphy structure
+ * @wdev: Pointer to the wireless device.
+ * @mac: bssid
+ * @params: Pointer to station parameters
+ *
+ * This is the cfg80211 change station handler function which invokes
+ * the internal function @__wlan_hdd_change_station with
+ * SSR protection.
+ *
+ * Return: 0 for success, error number on failure.
+ */
+static int wlan_hdd_change_station(struct wiphy *wiphy,
+				   struct wireless_dev *wdev,
+				   const u8 *mac,
+				   struct station_parameters *params)
+{
+	int errno;
+	struct osif_vdev_sync *vdev_sync;
+	struct net_device *dev;
+
+	errno = osif_vdev_sync_wdev_op_start(wdev, &vdev_sync);
+	if (errno)
+		return errno;
+
+	dev = hdd_wdev_get_netdev(wdev);
+	if (!dev) {
+		hdd_err("Failed to get ndetdev from wdev");
+		errno = -EINVAL;
+		goto out;
+	}
+	errno = __wlan_hdd_change_station(wiphy, dev, mac, params);
+
+out:
+	osif_vdev_sync_op_stop(vdev_sync);
+
+	return errno;
+}
+#else
 /**
  * wlan_hdd_change_station() - cfg80211 change station handler function
  * @wiphy: Pointer to the wiphy structure
@@ -26521,6 +26855,7 @@ static int wlan_hdd_change_station(struct wiphy *wiphy,
 
 	return errno;
 }
+#endif
 
 #ifdef FEATURE_WLAN_ESE
 static bool hdd_is_krk_enc_type(uint32_t cipher_type)
@@ -27473,6 +27808,27 @@ static int wlan_hdd_add_key_mlo_vdev(mac_handle_t mac_handle,
 		if (QDF_IS_STATUS_ERROR(status)) {
 			hdd_err("Posting of link connect request failed");
 			return -EINVAL;
+		}
+	}
+
+	if (pairwise && adapter->device_mode == QDF_STA_MODE) {
+		struct wlan_objmgr_peer *peer;
+		enum wlan_peer_type peer_type;
+		struct qdf_mac_addr mac_address = {0};
+
+		qdf_mem_copy(mac_address.bytes, mac_addr, QDF_MAC_ADDR_SIZE);
+		peer = wlan_objmgr_get_peer_by_mac(adapter->hdd_ctx->psoc,
+						   mac_address.bytes,
+						   WLAN_OSIF_ID);
+		if (peer) {
+			peer_type = wlan_peer_get_peer_type(peer);
+			wlan_objmgr_peer_release_ref(peer, WLAN_OSIF_ID);
+			if (peer_type == WLAN_PEER_TDLS &&
+			    !ucfg_tdls_is_key_install_allowed(vdev,
+							      &mac_address)) {
+				hdd_debug("TDLS peer's key install disallowed");
+				return 0;
+			}
 		}
 	}
 
@@ -28604,11 +28960,18 @@ static int __wlan_hdd_cfg80211_set_wiphy_params(struct wiphy *wiphy,
 /**
  * wlan_hdd_cfg80211_set_wiphy_params() - set wiphy parameters
  * @wiphy: Pointer to wiphy
+ * @radio_idx: radio index
  * @changed: Parameters changed
  *
  * Return: 0 for success, non-zero for failure
  */
-static int wlan_hdd_cfg80211_set_wiphy_params(struct wiphy *wiphy, u32 changed)
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0))
+static int wlan_hdd_cfg80211_set_wiphy_params(struct wiphy *wiphy,
+					      int radio_idx, u32 changed)
+#else
+static int wlan_hdd_cfg80211_set_wiphy_params(struct wiphy *wiphy,
+					      u32 changed)
+#endif
 {
 	struct osif_psoc_sync *psoc_sync;
 	int errno;
@@ -29137,25 +29500,6 @@ fn_end:
 	return 0;
 }
 
-#if defined(USE_CFG80211_DEL_STA_V2)
-int wlan_hdd_del_station(struct hdd_adapter *adapter, const uint8_t *mac)
-{
-	struct station_del_parameters del_sta;
-
-	del_sta.mac = mac;
-	del_sta.subtype = IEEE80211_STYPE_DEAUTH >> 4;
-	del_sta.reason_code = WLAN_REASON_DEAUTH_LEAVING;
-
-	return wlan_hdd_cfg80211_del_station(adapter->wdev.wiphy,
-					     adapter->dev, &del_sta);
-}
-#else
-int wlan_hdd_del_station(struct hdd_adapter *adapter, const uint8_t *mac)
-{
-	return wlan_hdd_cfg80211_del_station(adapter->wdev.wiphy,
-					     adapter->dev, mac);
-}
-#endif
 
 /**
  * _wlan_hdd_cfg80211_del_station() - delete station entry handler
@@ -29191,6 +29535,27 @@ static int _wlan_hdd_cfg80211_del_station(struct wiphy *wiphy,
 }
 
 #ifdef USE_CFG80211_DEL_STA_V2
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 18, 21))
+int wlan_hdd_cfg80211_del_station(struct wiphy *wiphy,
+				  struct wireless_dev *wdev,
+				  struct station_del_parameters *param)
+{
+	struct net_device *dev;
+
+	if (!param)
+		return -EINVAL;
+
+	dev = hdd_wdev_get_netdev(wdev);
+	if (!dev) {
+		hdd_err("Failed to get ndetdev from wdev");
+		return -EINVAL;
+	}
+
+	return _wlan_hdd_cfg80211_del_station(wiphy, dev, param->mac,
+					      param->reason_code,
+					      param->subtype);
+}
+#else
 int wlan_hdd_cfg80211_del_station(struct wiphy *wiphy,
 				  struct net_device *dev,
 				  struct station_del_parameters *param)
@@ -29202,7 +29567,9 @@ int wlan_hdd_cfg80211_del_station(struct wiphy *wiphy,
 					      param->reason_code,
 					      param->subtype);
 }
-#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 16, 0))
+#endif
+#else
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 16, 0))
 int wlan_hdd_cfg80211_del_station(struct wiphy *wiphy, struct net_device *dev,
 				  const uint8_t *mac)
 {
@@ -29219,6 +29586,43 @@ int wlan_hdd_cfg80211_del_station(struct wiphy *wiphy, struct net_device *dev,
 	uint8_t subtype = SIR_MAC_MGMT_DEAUTH >> 4;
 
 	return _wlan_hdd_cfg80211_del_station(wiphy, dev, mac, reason, subtype);
+}
+#endif
+#endif
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 18, 21))
+static int _wlan_hdd_del_station(struct hdd_adapter *adapter,
+				 struct station_del_parameters *param)
+{
+
+	return wlan_hdd_cfg80211_del_station(adapter->wdev.wiphy,
+					     &adapter->wdev, param);
+}
+#else
+static int _wlan_hdd_del_station(struct hdd_adapter *adapter,
+				 struct station_del_parameters *param)
+{
+	return wlan_hdd_cfg80211_del_station(adapter->wdev.wiphy,
+					     adapter->dev, param);
+}
+#endif
+
+#if defined(USE_CFG80211_DEL_STA_V2)
+int wlan_hdd_del_station(struct hdd_adapter *adapter, const uint8_t *mac)
+{
+	struct station_del_parameters del_sta;
+
+	del_sta.mac = mac;
+	del_sta.subtype = IEEE80211_STYPE_DEAUTH >> 4;
+	del_sta.reason_code = WLAN_REASON_DEAUTH_LEAVING;
+
+	return _wlan_hdd_del_station(adapter, &del_sta);
+}
+#else
+int wlan_hdd_del_station(struct hdd_adapter *adapter, const uint8_t *mac)
+{
+	return wlan_hdd_cfg80211_del_station(adapter->wdev.wiphy,
+					     adapter->dev, mac);
 }
 #endif
 
@@ -29290,6 +29694,43 @@ static int __wlan_hdd_cfg80211_add_station(struct wiphy *wiphy,
 	return status;
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 18, 21))
+/**
+ * wlan_hdd_cfg80211_add_station() - add station
+ * @wiphy: Pointer to wiphy
+ * @wdev: Pointer to wireless device
+ * @mac: Pointer to station mac address
+ * @params: Pointer to add station parameter
+ *
+ * Return: 0 for success, non-zero for failure
+ */
+static int wlan_hdd_cfg80211_add_station(struct wiphy *wiphy,
+					 struct wireless_dev *wdev,
+					 const uint8_t *mac,
+					 struct station_parameters *params)
+{
+	int errno;
+	struct osif_vdev_sync *vdev_sync;
+	struct net_device *dev;
+
+	errno = osif_vdev_sync_wdev_op_start(wdev, &vdev_sync);
+	if (errno)
+		return errno;
+
+	dev = hdd_wdev_get_netdev(wdev);
+	if (!dev) {
+		hdd_err("Failed to get ndetdev from wdev");
+		errno = -EINVAL;
+		goto out;
+	}
+
+	errno = __wlan_hdd_cfg80211_add_station(wiphy, dev, mac, params);
+out:
+	osif_vdev_sync_op_stop(vdev_sync);
+
+	return errno;
+}
+#else
 /**
  * wlan_hdd_cfg80211_add_station() - add station
  * @wiphy: Pointer to wiphy
@@ -29323,6 +29764,7 @@ static int wlan_hdd_cfg80211_add_station(struct wiphy *wiphy,
 
 	return errno;
 }
+#endif
 
 #if (defined(CFG80211_CONFIG_PMKSA_TIMER_PARAMS_SUPPORT) || \
 	     (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0)))
@@ -31287,16 +31729,20 @@ __wlan_hdd_cfg80211_update_connect_params(struct wiphy *wiphy,
 	mac_handle = hdd_ctx->mac_handle;
 
 	if (changed & UPDATE_ASSOC_IE) {
-		assoc_ie.len = req->ie_len;
-		assoc_ie.ptr = (uint8_t *)req->ie;
-		/*
-		 * Update this assoc IE received from user space to
-		 * umac. RSO command will pick up the assoc
-		 * IEs to be sent to firmware from the umac.
-		 */
-		ucfg_cm_update_session_assoc_ie(hdd_ctx->psoc,
+		if (!hdd_cm_is_vdev_roaming(adapter->deflink)) {
+			assoc_ie.len = req->ie_len;
+			assoc_ie.ptr = (uint8_t *)req->ie;
+			/*
+			 * Update this assoc IE received from user space to
+			 * umac. RSO command will pick up the assoc
+			 * IEs to be sent to firmware from the umac.
+			 */
+			ucfg_cm_update_session_assoc_ie(
+						hdd_ctx->psoc,
 						adapter->deflink->vdev_id,
 						&assoc_ie);
+		} else
+			hdd_debug("skip assoc ie during roam");
 	}
 
 	if ((changed & UPDATE_FILS_ERP_INFO) ||
@@ -32027,9 +32473,16 @@ static int __wlan_hdd_cfg80211_set_chainmask(struct wiphy *wiphy,
 	return ret;
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0))
+static int wlan_hdd_cfg80211_set_chainmask(struct wiphy *wiphy,
+					   int radio_idx,
+					   uint32_t tx_mask,
+					   uint32_t rx_mask)
+#else
 static int wlan_hdd_cfg80211_set_chainmask(struct wiphy *wiphy,
 					   uint32_t tx_mask,
 					   uint32_t rx_mask)
+#endif
 {
 	struct osif_psoc_sync *psoc_sync;
 	int errno;
@@ -32073,9 +32526,16 @@ static int __wlan_hdd_cfg80211_get_chainmask(struct wiphy *wiphy,
 	return 0;
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0))
+static int wlan_hdd_cfg80211_get_chainmask(struct wiphy *wiphy,
+					   int radio_idx,
+					   uint32_t *tx_mask,
+					   uint32_t *rx_mask)
+#else
 static int wlan_hdd_cfg80211_get_chainmask(struct wiphy *wiphy,
 					   uint32_t *tx_mask,
 					   uint32_t *rx_mask)
+#endif
 {
 	struct osif_psoc_sync *psoc_sync;
 	int errno;
@@ -33828,11 +34288,6 @@ static void __wlan_hdd_cfg80211_update_mgmt_frame_registrations(
 
 	hdd_debug("Mode: %d, set mgmt regis update value 0x%x",
 		  adapter->device_mode, upd->interface_stypes);
-
-	if (adapter->device_mode == QDF_P2P_DEVICE_MODE)
-		ucfg_p2p_set_mgmt_frm_registration_update(
-						hdd_ctx->psoc,
-						upd->interface_stypes);
 }
 
 /**

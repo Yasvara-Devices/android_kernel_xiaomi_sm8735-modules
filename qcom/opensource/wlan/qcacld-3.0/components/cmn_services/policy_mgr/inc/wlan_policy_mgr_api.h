@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -157,6 +157,7 @@ static inline const char *device_mode_to_string(uint32_t idx)
 	CASE_RETURN_STRING(PM_NDI_MODE);
 	CASE_RETURN_STRING(PM_NAN_DISC_MODE);
 	CASE_RETURN_STRING(PM_LL_LT_SAP_MODE);
+	CASE_RETURN_STRING(PM_PASSTHRU_MODE);
 	default:
 		return "Unknown";
 	}
@@ -492,6 +493,28 @@ policy_mgr_get_sta_sap_scc_lte_coex_chnl(struct wlan_objmgr_psoc *psoc,
  */
 QDF_STATUS policy_mgr_get_sap_mandt_chnl(struct wlan_objmgr_psoc *psoc,
 					 uint8_t *sap_mandt_chnl);
+
+/*
+ * policy_mgr_get_sap_force_20mhz_for_country_id() - to find out if SAP
+ * force 20Mhz is enabled and country code is ID
+ * @psoc: pointer to psoc
+ * @freq: freq
+ * @vdev: vdev object pointer to check device mode
+ *
+ * This API is used to find out whether SAP's force 20Mhz support
+ * is enabled. Returns true only when all three conditions are met:
+ * 1. Device mode is SAP (verified via vdev opmode)
+ * 2. Frequency is in 5GHz UNII-3 band
+ * 3. Country code is Indonesia ("ID") and INI gForceSAP20Mhz_cc_id is enabled
+ *
+ * Return: bool
+ */
+bool
+policy_mgr_get_sap_force_20mhz_for_country_id(
+					struct wlan_objmgr_psoc *psoc,
+					struct wlan_objmgr_vdev *vdev,
+					qdf_freq_t freq);
+
 /**
  * policy_mgr_get_indoor_chnl_marking() - to get if indoor channel can be
  *						marked as disabled
@@ -2340,6 +2363,7 @@ struct policy_mgr_sme_cbacks {
  * @wlan_get_sap_acs_band: get acs band from sap config
  * @wlan_check_cc_intf_cb: get interference frequency of input SAP/GO interface
  * @wlan_set_tx_rx_nss_cb: set NSS dynamically for STA
+ * @hdd_get_sap_connected_sta_band: Get bands supported by connected STA to SAP
  */
 struct policy_mgr_hdd_cbacks {
 	QDF_STATUS (*sap_restart_chan_switch_cb)(struct wlan_objmgr_psoc *psoc,
@@ -2374,6 +2398,8 @@ struct policy_mgr_hdd_cbacks {
 	QDF_STATUS (*wlan_set_tx_rx_nss_cb)(struct wlan_objmgr_psoc *psoc,
 					    uint8_t vdev_id, uint8_t tx_nss,
 					    uint8_t rx_nss);
+	uint8_t (*hdd_get_sap_connected_sta_band)(struct wlan_objmgr_psoc *psoc,
+						  uint8_t vdev_id);
 };
 
 /**
@@ -5345,6 +5371,23 @@ bool policy_mgr_is_non_ml_sta_present(struct wlan_objmgr_psoc *psoc);
  */
 bool policy_mgr_is_mlo_sta_present(struct wlan_objmgr_psoc *psoc);
 
+/*
+ * policy_mgr_sta_ml_link_enable_allowed() - Check with given ML links and
+ * existing concurrencies, a disabled ml link can be enabled back.
+ * @psoc: psoc ctx
+ * @num_disabled_ml_sta: Number of existing disabled links
+ * @num_ml_sta: Number of total ML STA links
+ * @ml_freq_lst: ML STA freq list
+ * @ml_vdev_lst: ML STA vdev id list
+ *
+ * Return: if link can be enabled or not
+ */
+bool
+policy_mgr_sta_ml_link_enable_allowed(struct wlan_objmgr_psoc *psoc,
+				      uint8_t num_disabled_ml_sta,
+				      uint8_t num_ml_sta,
+				      qdf_freq_t *ml_freq_lst,
+				      uint8_t *ml_vdev_lst);
 /**
  * policy_mgr_is_mlo_in_mode_sbs() - Check whether MLO present is SBS (with both
  * links on 5/6 ghz band)
@@ -6084,6 +6127,16 @@ policy_mgr_sap_on_non_psc_channel(struct wlan_objmgr_psoc *psoc,
 				  uint8_t sap_vdev_id);
 
 #ifdef WLAN_FEATURE_LL_LT_SAP
+/*
+ * policy_mgr_is_6G_chan_valid_for_ll_sap() - check if 6 Ghz freq allowed for
+ * ll lt SAP
+ * @freq: freq
+ *
+ * Return: true if 6 Ghz freq is allowed for ll lt sap ie unii5.
+ * Otherwise false.
+ */
+bool policy_mgr_is_6G_chan_valid_for_ll_sap(qdf_freq_t freq);
+
 /**
  * policy_mgr_get_pcl_ch_list_for_ll_sap() - Get PCL channel list for LL_LT_SAP
  * @psoc: psoc object
@@ -6101,6 +6154,44 @@ QDF_STATUS policy_mgr_get_pcl_ch_list_for_ll_sap(
 					struct connection_info *info,
 					uint8_t *connection_count);
 #endif
+
+#ifdef WLAN_FEATURE_11BE_MLO
+/**
+ * policy_mgr_get_inact_vdev_present_with_freq() - Get inactive VDEV ID present
+ * with frequency
+ * @psoc: PSOC object information
+ * @freq: Frequency to check
+ * @vdev_id: VDEV ID to check
+ *
+ * This function checks if there is an inactive VDEV ID present with the given
+ * frequency.
+ *
+ * Return: VDEV ID if found, WLAN_UMAC_VDEV_ID_MAX otherwise
+ */
+uint8_t
+policy_mgr_get_inact_vdev_present_with_freq(struct wlan_objmgr_psoc *psoc,
+					    qdf_freq_t freq, uint8_t vdev_id);
+#else
+static inline uint8_t
+policy_mgr_get_inact_vdev_present_with_freq(struct wlan_objmgr_psoc *psoc,
+					    qdf_freq_t freq, uint8_t vdev_id)
+{
+	return WLAN_UMAC_VDEV_ID_MAX;
+}
+#endif
+
+/**
+ * policy_mgr_get_vdev_present_with_freq() - Check if any other  vdev present
+ * with the given freq.
+ * @psoc: pointer to psoc
+ * @freq: given freq
+ * @vdev_id: current vdev id.
+ *
+ * Return: vdev id of the scc vdev
+ */
+uint8_t
+policy_mgr_get_vdev_present_with_freq(struct wlan_objmgr_psoc *psoc,
+				      qdf_freq_t freq, uint8_t vdev_id);
 
 /**
  * policy_mgr_mon_sbs_mac0_freq() - Check if the given frequency is
@@ -6204,4 +6295,32 @@ void policy_mgr_update_flow_pool_map(struct wlan_objmgr_psoc *psoc,
 uint8_t policy_mgr_fetch_scc_vdev_id(struct wlan_objmgr_psoc *psoc,
 				     uint8_t vdev_id, uint32_t freq);
 
+/**
+ * policy_mgr_is_conc_sap_ready_for_mcc_to_scc_trans() - Check if SAP is going
+ *							 to move from MCC to SCC
+ * @psoc: Pointer to PSOC object
+ *
+ * Return: True if there is a SAP in MCC with STA and if it's going to move to
+ *	   STA channel, i.e. SCC
+ */
+bool
+policy_mgr_is_conc_sap_ready_for_mcc_to_scc_trans(
+	struct wlan_objmgr_psoc *psoc);
+
+#ifdef DRIVER_PASSTHRU_MODE
+/**
+ * policy_mgr_is_chan_change_allowed_for_passthru() - check if channel change
+ *  is allowed for passthru vdev
+ * @psoc: psoc pointer
+ * @vdev_id: vdev id
+ * @freq: channel frequency
+ * @bw: bandwidth
+ *
+ * Return: true if allowed else false
+ */
+bool
+policy_mgr_is_chan_change_allowed_for_passthru(struct wlan_objmgr_psoc *psoc,
+					       uint8_t vdev_id, uint32_t freq,
+					       enum hw_mode_bandwidth bw);
+#endif
 #endif /* __WLAN_POLICY_MGR_API_H */

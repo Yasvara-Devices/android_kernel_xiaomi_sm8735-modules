@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -49,9 +49,7 @@
 #include "wlan_mlo_mgr_sta.h"
 #include "wlan_cp_stats_mc_tgt_api.h"
 #include "wlan_objmgr_pdev_obj.h"
-#ifdef WLAN_FEATURE_LL_LT_SAP
 #include "wlan_ll_sap_api.h"
-#endif
 #include "wlan_nan_api_i.h"
 #include "wlan_tdls_api.h"
 #include <wlan_p2p_api.h>
@@ -155,7 +153,8 @@ QDF_STATUS mlme_register_vdev_mgr_ops(struct vdev_mlme_obj *vdev_mlme)
 
 	if (mlme_is_vdev_in_beaconning_mode(vdev->vdev_mlme.vdev_opmode))
 		vdev_mlme->ops = &ap_mlme_ops;
-	else if (vdev->vdev_mlme.vdev_opmode == QDF_MONITOR_MODE)
+	else if (vdev->vdev_mlme.vdev_opmode == QDF_MONITOR_MODE ||
+		 vdev->vdev_mlme.vdev_opmode == QDF_PASSTHRU_MODE)
 		vdev_mlme->ops = &mon_mlme_ops;
 	else
 		vdev_mlme->ops = &sta_mlme_ops;
@@ -1560,6 +1559,9 @@ static QDF_STATUS mlme_get_vdev_types(enum QDF_OPMODE mode, uint8_t *type,
 	case QDF_NAN_DISC_MODE:
 		*type = WLAN_VDEV_MLME_TYPE_NAN;
 		break;
+	case QDF_PASSTHRU_MODE:
+		*type = WLAN_VDEV_MLME_TYPE_PASSTHRU;
+		break;
 	default:
 		mlme_err("Invalid device mode %d", mode);
 		status = QDF_STATUS_E_INVAL;
@@ -1885,6 +1887,9 @@ static QDF_STATUS mon_mlme_vdev_disconnect_peers(
 
 	mlme_legacy_debug("vdev id = %d",
 			  vdev_mlme->vdev->vdev_objmgr.vdev_id);
+#ifdef DRIVER_PASSTHRU_MODE
+	lim_passthru_mlme_vdev_disconnect_peers(vdev_mlme, data_len, data);
+#endif
 	return wlan_vdev_mlme_sm_deliver_evt(
 				vdev_mlme->vdev,
 				WLAN_VDEV_SM_EV_DISCONNECT_COMPLETE,
@@ -1909,6 +1914,14 @@ static QDF_STATUS mon_mlme_vdev_stop_send(struct vdev_mlme_obj *vdev_mlme,
 	return wma_mon_mlme_vdev_stop_send(vdev_mlme, data_len, data);
 }
 
+static QDF_STATUS mon_mlme_vdev_stop_resp(struct vdev_mlme_obj *vdev_mlme,
+					  struct vdev_stop_response *rsp)
+{
+	mlme_legacy_debug("vdev id = %d",
+			  vdev_mlme->vdev->vdev_objmgr.vdev_id);
+	return wma_mon_mlme_vdev_stop_resp(vdev_mlme);
+}
+
 /**
  * mon_mlme_vdev_down_send() - callback to send vdev down req
  * @vdev_mlme: vdev mlme object
@@ -1922,17 +1935,18 @@ static QDF_STATUS mon_mlme_vdev_stop_send(struct vdev_mlme_obj *vdev_mlme,
 static QDF_STATUS mon_mlme_vdev_down_send(struct vdev_mlme_obj *vdev_mlme,
 					  uint16_t data_len, void *data)
 {
-	mlme_legacy_debug("vdev id = %d",
-			  vdev_mlme->vdev->vdev_objmgr.vdev_id);
-	return wma_mon_mlme_vdev_down_send(vdev_mlme, data_len, data);
-}
+	QDF_STATUS status;
 
-static QDF_STATUS mon_mlme_vdev_stop_resp(struct vdev_mlme_obj *vdev_mlme,
-					  struct vdev_stop_response *rsp)
-{
 	mlme_legacy_debug("vdev id = %d",
 			  vdev_mlme->vdev->vdev_objmgr.vdev_id);
-	return wma_mon_mlme_vdev_stop_resp(vdev_mlme);
+
+	status = wma_mon_mlme_vdev_down_send(vdev_mlme, data_len, data);
+
+	if (QDF_IS_STATUS_ERROR(status) &&
+	    wlan_vdev_mlme_get_opmode(vdev_mlme->vdev) == QDF_PASSTHRU_MODE)
+		mon_mlme_vdev_stop_resp(vdev_mlme, NULL);
+
+	return status;
 }
 
 static void mon_mlme_vdev_down(struct vdev_mlme_obj *vdev_mlme)
@@ -2279,6 +2293,7 @@ bool mlme_vdev_uses_self_peer(uint32_t vdev_type, uint32_t vdev_subtype)
 
 	case WMI_VDEV_TYPE_MONITOR:
 	case WMI_VDEV_TYPE_OCB:
+	case WMI_VDEV_TYPE_WIFI_PASSTHRU:
 		return true;
 
 	default:
