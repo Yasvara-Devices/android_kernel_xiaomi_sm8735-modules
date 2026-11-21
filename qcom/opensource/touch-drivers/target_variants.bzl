@@ -1,11 +1,18 @@
 targets = [
     # keep sorted
+    "art",
+    "art16k",
+    "bengal",
     "canoe",
     "gen3auto",
+    "malabar",
     "monaco",
     "sun",
     "vienna",
     "lahaina",
+    "shikra",
+    "shikra_tiny_32go",
+    "shikra_64go"
 ]
 
 la_variants = [
@@ -16,12 +23,16 @@ la_variants = [
 
 le_targets = [
     # keep sorted
+    "alor-le",
+    "pebble-le",
     "sun-allyes",
 ]
 
 le_variants = [
     # keep sorted
     "perf-defconfig",
+    "debug-defconfig",
+    "defconfig",
 ]
 
 vm_types = [
@@ -30,8 +41,11 @@ vm_types = [
 ]
 
 vm_target_bases = [
+    "art",
     "sun",
     "canoe",
+    "malabar",
+    "shikra"
 ]
 
 vm_targets = ["{}-{}".format(t, vt) for t in vm_target_bases for vt in vm_types]

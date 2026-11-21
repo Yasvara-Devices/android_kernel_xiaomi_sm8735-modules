@@ -57,6 +57,26 @@ module_entry(
     deps = ["qts"],
 )
 
+#define ddk_module() for goodix_ts2
+module_entry(
+    name = "goodix_ts2",
+    config_option = "CONFIG_TOUCHSCREEN_GOODIX_BRL2",
+    srcs = [
+            "goodix_berlin_driver2/goodix_brl_fwupdate.c",
+            "goodix_berlin_driver2/goodix_brl_hw.c",
+            "goodix_berlin_driver2/goodix_brl_i2c.c",
+            "goodix_berlin_driver2/goodix_brl_spi.c",
+            "goodix_berlin_driver2/goodix_cfg_bin.c",
+            "goodix_berlin_driver2/goodix_ts_core.c",
+            "goodix_berlin_driver2/goodix_ts_dump.c",
+            "goodix_berlin_driver2/goodix_ts_gesture.c",
+            "goodix_berlin_driver2/goodix_ts_inspect.c",
+            "goodix_berlin_driver2/goodix_ts_replay.c",
+            "goodix_berlin_driver2/goodix_ts_tools.c",
+            "goodix_berlin_driver2/goodix_ts_utils.c"
+    ],
+    deps = ["qts"],
+)
 #define ddk_module() for nt36xxx
 module_entry(
     name = "nt36xxx-i2c",
@@ -99,6 +119,25 @@ module_entry(
     ]
 )
 
+
+#define ddk_module() for synaptics_tcm2_ts
+module_entry(
+    name = "synaptics_tcm2_ts",
+    config_option = "CONFIG_TOUCHSCREEN_SYNAPTICS_TCM2",
+    srcs = [
+			"synaptics_tcm2/syna_tcm2.c",
+			"synaptics_tcm2/syna_tcm2_platform_spi.c",
+			"synaptics_tcm2/syna_tcm2_sysfs.c",
+			"synaptics_tcm2/syna_tcm2_cdev.c",
+			"synaptics_tcm2/tcm/synaptics_touchcom_func_base.c",
+			"synaptics_tcm2/tcm/synaptics_touchcom_func_touch.c",
+			"synaptics_tcm2/tcm/synaptics_touchcom_core_v1.c",
+			"synaptics_tcm2/tcm/synaptics_touchcom_image_parsing.c",
+			"synaptics_tcm2/tcm/synaptics_touchcom_func_reflash.c"
+    ],
+    deps = ["qts"],
+)
+
 #define ddk_module() for atmel_mxt_ts
 module_entry(
     name = "atmel_mxt_ts",
@@ -114,6 +153,15 @@ module_entry(
     config_option = "CONFIG_TOUCHSCREEN_DUMMY",
     srcs = [
             "dummy_touch/dummy_touch.c"
+    ]
+)
+
+#define ddk_module() for glink_interface_ts
+module_entry(
+    name = "glink_comm",
+    config_option = "CONFIG_TOUCHSCREEN_MSM_GLINK",
+    srcs = [
+            "glink_interface_ts/glink_interface.c"
     ]
 )
 
@@ -182,5 +230,21 @@ module_entry(
             "raydium/chip_raydium/f303_ic_test.c",
             "raydium/chip_raydium/ic_drv_global.c",
             "raydium/chip_raydium/ic_drv_interface.c"
+    ],
+    deps = [
+	    "glink_comm"
     ]
+)
+
+#define ddk_module() for gt9xx-ts
+module_entry(
+    name = "gt9xx-ts",
+    config_option = "CONFIG_TOUCHSCREEN_GT9XX",
+
+    srcs = [
+            "gt9xx/gt9xx.c",
+            "gt9xx/gt9xx_update.c",
+            "gt9xx/goodix_tool.c"
+    ],
+    deps = ["qts"],
 )

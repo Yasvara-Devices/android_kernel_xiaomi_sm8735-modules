@@ -1,5 +1,6 @@
 load("//build/kernel/kleaf:kernel.bzl", "ddk_module", "ddk_submodule", "kernel_module_group")
-load("//build/bazel_common_rules/dist:dist.bzl", "copy_to_dist_dir")
+load("@rules_pkg//pkg:install.bzl", "pkg_install")
+load("@rules_pkg//pkg:mappings.bzl", "pkg_files", "strip_prefix")
 
 def _register_module_to_map(module_map, name, path, config_option, srcs, deps):
     module = struct(
@@ -51,22 +52,21 @@ def define_target_variant_modules(target, variant, registry, modules, config_opt
     options = _get_kernel_build_options(modules, config_options)
     build_print = lambda message: print("{}: {}".format(kernel_build, message))
     formatter = lambda s: s.replace("%b", kernel_build).replace("%t", target)
+    socrepo_deps = [
+        "//soc-repo:all_headers",
+        "//soc-repo:{}/drivers/pinctrl/qcom/pinctrl-msm".format(kernel_build),
+        "//soc-repo:{}/drivers/virt/gunyah/gh_mem_notifier".format(kernel_build),
+        "//soc-repo:{}/drivers/virt/gunyah/gh_irq_lend".format(kernel_build),
+        "//soc-repo:{}/drivers/virt/gunyah/gh_rm_drv".format(kernel_build),
+        "//soc-repo:{}/drivers/soc/qcom/panel_event_notifier".format(kernel_build),
+    ]
+    if target in ("art-tuivm", "art-oemvm"):
+        socrepo_deps.append("//soc-repo:{}/drivers/virt/gunyah/gunyah_crash_cleaner".format(kernel_build))
+
     deps = select({
-        "//build/kernel/kleaf:socrepo_true": [
-            "//soc-repo:all_headers",
-            "//soc-repo:{}/drivers/pinctrl/qcom/pinctrl-msm".format(kernel_build),
-            "//soc-repo:{}/drivers/virt/gunyah/gh_mem_notifier".format(kernel_build),
-            "//soc-repo:{}/drivers/virt/gunyah/gh_irq_lend".format(kernel_build),
-            "//soc-repo:{}/drivers/virt/gunyah/gh_rm_drv".format(kernel_build),
-        ],
+        "//build/kernel/kleaf:socrepo_true": socrepo_deps,
         "//build/kernel/kleaf:socrepo_false": ["//msm-kernel:all_headers"],
     })
-
-    if not vm_target:
-        deps += select({
-            "//build/kernel/kleaf:socrepo_true": ["//soc-repo:{}/drivers/soc/qcom/panel_event_notifier".format(kernel_build)],
-            "//build/kernel/kleaf:socrepo_false": [],
-        })
 
     all_module_rules = []
 
@@ -97,13 +97,16 @@ def define_target_variant_modules(target, variant, registry, modules, config_opt
         name = "{}_touch_modules".format(kernel_build),
         srcs = all_module_rules,
     )
-    copy_to_dist_dir(
+
+    pkg_files(
+        name = kernel_build + "_dist_files",
+        srcs = [":{}_touch_modules".format(kernel_build)],
+        visibility = ["//visibility:private"],
+        strip_prefix = strip_prefix.files_only(),
+    )
+
+    pkg_install(
         name = "{}_touch_drivers_dist".format(kernel_build),
-        data = [":{}_touch_modules".format(kernel_build)],
-        dist_dir = "out/target/product/{}/dlkm/lib/modules".format(target),
-        flat = True,
-        wipe_dist_dir = False,
-        allow_duplicate_filenames = False,
-        mode_overrides = {"**/*": "644"},
-        log = "info",
+        srcs = [":{}_dist_files".format(kernel_build)],
+        destdir = "out/target/product/{}/dlkm/lib/modules".format(target),
     )
