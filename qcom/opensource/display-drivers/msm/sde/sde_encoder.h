@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
@@ -28,6 +28,7 @@
 #include "msm_drv.h"
 #include "sde_hw_mdss.h"
 #include "sde_kms.h"
+#include "sde_vm.h"
 #include "sde_connector.h"
 #include "sde_power_handle.h"
 #include "sde_cesta.h"
@@ -608,6 +609,8 @@ bool sde_encoder_is_dsc_merge(struct drm_encoder *drm_enc);
  */
 bool sde_encoder_check_curr_mode(struct drm_encoder *drm_enc, u32 mode);
 
+uint32_t sde_encoder_get_clones(struct drm_encoder *drm_enc);
+
 /**
  * sde_encoder_init - initialize virtual encoder object
  * @dev:        Pointer to drm device structure
@@ -774,6 +777,13 @@ void sde_encoder_control_idle_pc(struct drm_encoder *enc, bool enable);
  * @Return:     true if display in continuous splash
  */
 int sde_encoder_in_cont_splash(struct drm_encoder *enc);
+
+/**
+ * sde_encoder_in_cont_splash - checks if display supports PSR feature
+ * @drm_enc:    Pointer to drm encoder structure
+ * @Return:     true if display supports PSR feature
+ */
+bool sde_encoder_is_psr_supported(struct drm_encoder *enc);
 
 /**
  * sde_encoder_helper_hw_reset - hw reset helper function
@@ -1067,6 +1077,20 @@ void sde_encoder_complete_commit(struct drm_encoder *drm_enc);
  * @drm_enc: pointer to drm encoder
  */
 void sde_encoder_post_commit_bl_sr_work(struct drm_encoder *drm_enc);
+
+/**
+ * sde_encoder_trusted_vm_release - prepare interface for secure vm transition
+ * @sde_enc: pointer to sde encoder
+ */
+bool sde_encoder_trusted_vm_release(struct sde_encoder_virt *sde_enc);
+
+/**
+ * sde_encoder_vhm_trusted_vm_prepare - prepare vhm panel for secure vm transition
+ * @drm_enc: pointer to drm encoder
+ * @vm_req: current vm_req state
+ */
+void sde_encoder_vhm_trusted_vm_prepare(struct drm_encoder *drm_enc,
+	enum sde_crtc_vm_req vm_req);
 
 /**
  * sde_encoder_get_cesta_client - return the SDE CESTA client

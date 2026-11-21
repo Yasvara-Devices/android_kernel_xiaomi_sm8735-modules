@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  * Copyright (c) 2014-2021 The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
@@ -1214,7 +1214,6 @@ static int _sde_crtc_set_roi_v1(struct drm_crtc_state *state,
 	crtc = cstate->base.crtc;
 
 	memset(&cstate->user_roi_list, 0, sizeof(cstate->user_roi_list));
-	memset(&cstate->cached_user_roi_list, 0, sizeof(cstate->cached_user_roi_list));
 
 	if (!usr_ptr) {
 		SDE_DEBUG("crtc%d: rois cleared\n", DRMID(crtc));
@@ -2083,8 +2082,11 @@ static void _sde_crtc_set_src_split_order(struct drm_crtc *crtc,
 			if ((!nxt_pstate)
 				    || (nxt_pstate->stage != cur_pstate->stage)
 				    || (nxt_pstate->sde_pstate->layout !=
-					cur_pstate->sde_pstate->layout))
+					cur_pstate->sde_pstate->layout)) {
+				mutex_lock(&sde_crtc->property_info.property_lock);
 				cur_pstate->sde_pstate->pipe_order_flags = 0;
+				mutex_unlock(&sde_crtc->property_info.property_lock);
+			}
 
 			continue;
 		}
@@ -2109,8 +2111,10 @@ static void _sde_crtc_set_src_split_order(struct drm_crtc *crtc,
 			swap(prv_pstate, cur_pstate);
 		}
 
+		mutex_lock(&sde_crtc->property_info.property_lock);
 		cur_pstate->sde_pstate->pipe_order_flags = SDE_SSPP_RIGHT;
 		prv_pstate->sde_pstate->pipe_order_flags = 0;
+		mutex_unlock(&sde_crtc->property_info.property_lock);
 	}
 
 	for (i = 0; i < cnt; i++) {
@@ -3037,30 +3041,47 @@ static void _sde_crtc_dest_scaler_setup(struct drm_crtc *crtc)
 	}
 }
 
-static void _sde_crtc_put_frame_data_buffer(struct sde_frame_data_buffer *buf)
+/* This will put all frame data buffers from (and including) start_idx */
+static void _sde_crtc_put_frame_data_buffers_from(struct sde_crtc *sde_crtc, uint32_t start_idx)
 {
-	if (!buf)
+	struct sde_frame_data_buffer *buf;
+	int i;
+
+	if (start_idx >= SDE_FRAME_DATA_BUFFER_MAX)
 		return;
 
-	msm_gem_put_buffer(buf->gem);
-	kfree(buf);
-	buf = NULL;
+	for (i = start_idx; i < SDE_FRAME_DATA_BUFFER_MAX; i++) {
+		buf = sde_crtc->frame_data.buf[i];
+		if (!buf)
+			break;
+
+		if (buf->fb)
+			drm_framebuffer_put(buf->fb);
+		msm_gem_put_buffer(buf->gem);
+
+		kfree(buf);
+		sde_crtc->frame_data.buf[i] = NULL;
+		sde_crtc->frame_data.cnt--;
+	}
+
+	if (sde_crtc->frame_data.idx >= sde_crtc->frame_data.cnt)
+		sde_crtc->frame_data.idx = 0;
 }
 
 static int _sde_crtc_get_frame_data_buffer(struct drm_crtc *crtc, uint32_t fd)
 {
 	struct sde_crtc *sde_crtc;
 	struct sde_frame_data_buffer *buf;
-	uint32_t cur_buf;
 
 	sde_crtc = to_sde_crtc(crtc);
-	cur_buf = sde_crtc->frame_data.cnt;
 
 	buf = kzalloc(sizeof(struct sde_frame_data_buffer), GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
-	sde_crtc->frame_data.buf[cur_buf] = buf;
+	sde_crtc->frame_data.buf[sde_crtc->frame_data.cnt] = buf;
+	sde_crtc->frame_data.cnt++;
+
 	buf->fd = fd;
 	buf->fb = drm_framebuffer_lookup(crtc->dev, NULL, fd);
 	if (!buf->fb) {
@@ -3083,6 +3104,7 @@ static void _sde_crtc_set_frame_data_buffers(struct drm_crtc *crtc,
 {
 	struct sde_crtc *sde_crtc;
 	struct sde_drm_frame_data_buffers_ctrl ctrl;
+	uint32_t old_cnt;
 	int i, ret;
 
 	if (!crtc || !cstate || !usr)
@@ -3096,28 +3118,32 @@ static void _sde_crtc_set_frame_data_buffers(struct drm_crtc *crtc,
 		return;
 	}
 
+	spin_lock(&sde_crtc->frame_data_lock);
+
 	if (!ctrl.num_buffers) {
 		SDE_DEBUG("clearing frame data buffers");
+		_sde_crtc_put_frame_data_buffers_from(sde_crtc, 0);
 		goto exit;
-	} else if (ctrl.num_buffers > SDE_FRAME_DATA_BUFFER_MAX) {
-		SDE_ERROR("invalid number of buffers %d", ctrl.num_buffers);
-		return;
 	}
 
+	if (ctrl.num_buffers + sde_crtc->frame_data.cnt > SDE_FRAME_DATA_BUFFER_MAX) {
+		SDE_ERROR("invalid number of buffers %d, cur num:%d", ctrl.num_buffers,
+				sde_crtc->frame_data.cnt);
+		goto exit;
+	}
+
+	old_cnt = sde_crtc->frame_data.cnt;
 	for (i = 0; i < ctrl.num_buffers; i++) {
 		if (_sde_crtc_get_frame_data_buffer(crtc, ctrl.fds[i])) {
 			SDE_ERROR("unable to set buffer for fd %d", ctrl.fds[i]);
-			goto exit;
+			_sde_crtc_put_frame_data_buffers_from(sde_crtc, old_cnt);
+			break;
 		}
-		sde_crtc->frame_data.cnt++;
 	}
 
-	return;
 exit:
-	while (sde_crtc->frame_data.cnt--)
-		_sde_crtc_put_frame_data_buffer(
-				sde_crtc->frame_data.buf[sde_crtc->frame_data.cnt]);
-	sde_crtc->frame_data.cnt = 0;
+	spin_unlock(&sde_crtc->frame_data_lock);
+	return;
 }
 
 static void _sde_crtc_frame_data_notify(struct drm_crtc *crtc,
@@ -3154,6 +3180,8 @@ void sde_crtc_get_frame_data(struct drm_crtc *crtc)
 		return;
 
 	sde_crtc = to_sde_crtc(crtc);
+
+	spin_lock(&sde_crtc->frame_data_lock);
 	frame_data = &sde_crtc->frame_data;
 
 	if (frame_data->cnt) {
@@ -3177,6 +3205,7 @@ void sde_crtc_get_frame_data(struct drm_crtc *crtc)
 
 	if (frame_data->cnt)
 		_sde_crtc_frame_data_notify(crtc, data);
+	spin_unlock(&sde_crtc->frame_data_lock);
 }
 
 static void sde_crtc_frame_event_cb(void *data, u32 event, ktime_t ts)
@@ -3186,7 +3215,7 @@ static void sde_crtc_frame_event_cb(void *data, u32 event, ktime_t ts)
 	struct msm_drm_private *priv;
 	struct sde_crtc_frame_event *fevent;
 	struct sde_kms_frame_event_cb_data *cb_data;
-	unsigned long flags;
+	unsigned long flags = 0;
 	u32 crtc_id;
 
 	cb_data = (struct sde_kms_frame_event_cb_data *)data;
@@ -3747,6 +3776,8 @@ void sde_crtc_complete_commit(struct drm_crtc *crtc,
 
 	if ((crtc->state->active_changed || cont_splash_enabled) && crtc->state->active)
 		sde_crtc_event_notify(crtc, DRM_EVENT_CRTC_POWER, &power_on, sizeof(u32));
+
+	sde_crtc->kickoff_in_progress = false;
 }
 
 /**
@@ -3995,6 +4026,7 @@ static int _sde_crtc_check_dest_scaler_cfg(struct drm_crtc *crtc,
 	struct sde_crtc *sde_crtc;
 	struct sde_rect conn_roi = {0};
 	struct sde_rect crtc_roi = {0};
+	bool pu_enable = false;
 
 	sde_crtc = to_sde_crtc(crtc);
 	crtc_state = &cstate->base;
@@ -4004,15 +4036,14 @@ static int _sde_crtc_check_dest_scaler_cfg(struct drm_crtc *crtc,
 	if (c_conn_state == NULL)
 		return -EINVAL;
 
-	if (c_conn_state->rois.num_rects)
+	if (c_conn_state->rois.num_rects || cstate->user_roi_list.num_rects) {
 		sde_kms_rect_merge_rectangles(&c_conn_state->rois, &conn_roi);
-
-	if (cstate->user_roi_list.num_rects)
 		sde_kms_rect_merge_rectangles(&cstate->user_roi_list, &crtc_roi);
+		pu_enable = true;
+	}
 
 	if (cfg->flags & SDE_DRM_DESTSCALER_SCALE_UPDATE ||
 		cfg->flags & SDE_DRM_DESTSCALER_ENHANCER_UPDATE) {
-		bool pu_enable = cfg->flags & SDE_DRM_DESTSCALER_PU_ENABLE;
 
 		/**
 		 * Scaler src and dst width shouldn't exceed the maximum
@@ -4027,12 +4058,10 @@ static int _sde_crtc_check_dest_scaler_cfg(struct drm_crtc *crtc,
 			!cfg->scl3_cfg.src_width[0] ||
 			!cfg->scl3_cfg.dst_width ||
 			(pu_enable && cfg->scl3_cfg.dst_width != hdisplay) ||
-			(pu_enable && conn_roi.h != 0 && cfg->scl3_cfg.dst_height != conn_roi.h) ||
-			(pu_enable && crtc_roi.h != 0 && cfg->scl3_cfg.src_height[0]
-					!= crtc_roi.h) ||
-			(!pu_enable &&
-			(cfg->scl3_cfg.dst_width != hdisplay ||
-			cfg->scl3_cfg.dst_height != mode->vdisplay))) {
+			(pu_enable && cfg->scl3_cfg.dst_height != conn_roi.h) ||
+			(pu_enable && cfg->scl3_cfg.src_height[0] != crtc_roi.h) ||
+			(!pu_enable && (cfg->scl3_cfg.dst_width != hdisplay ||
+				cfg->scl3_cfg.dst_height != mode->vdisplay))) {
 			SDE_ERROR("crtc%d: ", crtc->base.id);
 			SDE_ERROR("src_wxh(%dx%d) dst(%dx%d) display(%dx%d)",
 				cfg->scl3_cfg.src_width[0],
@@ -4527,6 +4556,7 @@ static inline bool _is_vid_power_on_frame(struct drm_crtc *crtc)
 static bool _sde_crtc_wait_for_fences(struct drm_crtc *crtc)
 {
 	struct sde_crtc *sde_crtc = to_sde_crtc(crtc);
+	struct drm_encoder *encoder = NULL;
 	bool ipcc_input_signal_wait = false;
 	struct dma_fence *dma_hw_fences[MAX_HW_FENCES] = {0};
 	int num_hw_fences = 0;
@@ -4537,6 +4567,7 @@ static bool _sde_crtc_wait_for_fences(struct drm_crtc *crtc)
 	enum sde_crtc_vm_req vm_req;
 	bool disable_hw_fences = false;
 	bool trigger_sw_override = false;
+	bool video_psr_support = false;
 
 	SDE_DEBUG("\n");
 
@@ -4558,10 +4589,23 @@ static bool _sde_crtc_wait_for_fences(struct drm_crtc *crtc)
 		return false;
 	}
 
+	drm_for_each_encoder_mask(encoder, crtc->dev, crtc->state->encoder_mask) {
+		if (sde_encoder_in_clone_mode(encoder))
+			continue;
+
+		if (sde_encoder_is_built_in_display(encoder)) {
+			video_psr_support = sde_encoder_is_psr_supported(encoder);
+			break;
+		}
+	}
+
 	/* if this is the last frame on vm transition, disable hw fences */
-	vm_req = sde_crtc_get_property(to_sde_crtc_state(crtc->state), CRTC_PROP_VM_REQ_STATE);
-	if (vm_req == VM_REQ_RELEASE)
-		disable_hw_fences = true;
+	if (!video_psr_support) {
+		vm_req = sde_crtc_get_property(to_sde_crtc_state(crtc->state),
+				CRTC_PROP_VM_REQ_STATE);
+		if (vm_req == VM_REQ_RELEASE)
+			disable_hw_fences = true;
+	}
 
 	/* update ctl hw to wait for ipcc input signal before fetch */
 	if (test_bit(HW_FENCE_IN_FENCES_ENABLE, sde_crtc->hwfence_features_mask) ||
@@ -5522,7 +5566,6 @@ void sde_crtc_commit_kickoff(struct drm_crtc *crtc,
 
 		sde_encoder_kickoff(encoder, true);
 	}
-	sde_crtc->kickoff_in_progress = false;
 
 	/* store the event after frame trigger */
 	if (sde_crtc->event) {
@@ -5770,9 +5813,6 @@ void sde_crtc_reset_sw_state(struct drm_crtc *crtc)
 	set_bit(SDE_CRTC_DIRTY_DIM_LAYERS, &sde_crtc->revalidate_mask);
 	if (cstate->num_ds_enabled)
 		set_bit(SDE_CRTC_DIRTY_DEST_SCALER, cstate->dirty);
-
-	/* wipe out cached CRTC ROI so PU is seen as dirty next update */
-	memset(&cstate->cached_user_roi_list, 0, sizeof(cstate->cached_user_roi_list));
 }
 
 static void sde_crtc_post_ipc(struct drm_crtc *crtc)
@@ -8912,6 +8952,7 @@ struct drm_crtc *sde_crtc_init(struct drm_device *dev, struct drm_plane *plane)
 #endif
 	spin_lock_init(&sde_crtc->spin_lock);
 	spin_lock_init(&sde_crtc->event_spin_lock);
+	spin_lock_init(&sde_crtc->frame_data_lock);
 	atomic_set(&sde_crtc->frame_pending, 0);
 
 	sde_crtc->enabled = false;

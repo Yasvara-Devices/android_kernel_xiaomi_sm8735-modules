@@ -249,6 +249,10 @@ static void msm_smmu_destroy(struct msm_mmu *mmu)
 {
 	struct msm_smmu *smmu = to_msm_smmu(mmu);
 	struct platform_device *pdev = to_platform_device(smmu->client_dev);
+	struct iommu_domain *domain = iommu_get_domain_for_dev(smmu->client_dev);
+
+	if (domain)
+		iommu_set_fault_handler(domain, NULL, NULL);
 
 	if (smmu->client_dev)
 		platform_device_unregister(pdev);
@@ -596,10 +600,15 @@ static int msm_smmu_probe(struct platform_device *pdev)
 	mutex_unlock(&smmu_list_lock);
 
 	ret = component_add(&pdev->dev, &msm_smmu_comp_ops);
-	if (ret)
+	if (ret) {
 		pr_err("component add failed\n");
+		mutex_lock(&smmu_list_lock);
+		list_del(&client->smmu_list);
+		mutex_unlock(&smmu_list_lock);
+		return ret;
+	}
 
-	return ret;
+	return 0;
 }
 
 static int msm_smmu_remove(struct platform_device *pdev)

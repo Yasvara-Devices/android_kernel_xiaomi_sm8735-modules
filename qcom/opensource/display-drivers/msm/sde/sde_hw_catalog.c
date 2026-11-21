@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -5654,6 +5654,7 @@ static int _sde_hardware_pre_caps(struct sde_mdss_cfg *sde_cfg, uint32_t hw_rev)
 		sde_cfg->ts_prefill_rev = 2;
 		sde_cfg->ctl_rev = SDE_CTL_CFG_VERSION_1_0_0;
 		sde_cfg->sui_block_xin_mask = 0x1;
+		set_bit(SDE_FEATURE_EPT, sde_cfg->features);
 	} else if (IS_LAHAINA_TARGET(hw_rev)) {
 		set_bit(SDE_FEATURE_DEMURA, sde_cfg->features);
 		sde_cfg->demura_supported[SSPP_DMA1][0] = 0;
@@ -5987,6 +5988,7 @@ static int _sde_hardware_pre_caps(struct sde_mdss_cfg *sde_cfg, uint32_t hw_rev)
 		sde_cfg->demura_supported[SSPP_DMA3][1] = BIT(DEMURA_1);
 		sde_cfg->has_line_insertion = true;
 		sde_cfg->osc_clk_rate = 38400000;
+		sde_cfg->uidle_cfg.fal10_override = true;
 	} else if (IS_KERA_TARGET(hw_rev)) {
 		set_bit(SDE_FEATURE_DEDICATED_CWB, sde_cfg->features);
 		set_bit(SDE_FEATURE_CWB_DITHER, sde_cfg->features);
@@ -6024,6 +6026,7 @@ static int _sde_hardware_pre_caps(struct sde_mdss_cfg *sde_cfg, uint32_t hw_rev)
 		sde_cfg->ctl_rev = SDE_CTL_CFG_VERSION_1_0_0;
 		sde_cfg->true_inline_rot_rev = SDE_INLINE_ROT_VERSION_2_0_1;
 		sde_cfg->uidle_cfg.uidle_rev = SDE_UIDLE_VERSION_1_0_4;
+		sde_cfg->uidle_cfg.fal10_override = true;
 		sde_cfg->sid_rev = SDE_SID_VERSION_2_0_0;
 		sde_cfg->mdss_hw_block_size = 0x15c;
 		sde_cfg->max_bw_upvote_threshold_ns = DEFAULT_BW_UPVOTE_THRESHOLD_NS;

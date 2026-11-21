@@ -370,6 +370,7 @@ enum sde_crtc_hw_fence_flags {
  * @cached_encoder_mask : cached encoder_mask for vblank work
  * @line_time_in_ns : current mode line time in nano sec is needed for QOS update
  * @frame_data      : Framedata data structure
+ * @frame_data_lock : spinlock to protect framedata allocation, free and access
  * @previous_opr_value : store previous opr values
  * @opr_event_notify_enabled : Flag to indicate if opr event notify is enabled or not
  * @hwfence_features_mask : u32 mask to enable/disable hw fence features. See enum
@@ -491,6 +492,7 @@ struct sde_crtc {
 	u32 line_time_in_ns;
 
 	struct sde_frame_data frame_data;
+	spinlock_t frame_data_lock;
 
 	struct sde_opr_value previous_opr_value;
 	bool opr_event_notify_enabled;
@@ -553,8 +555,7 @@ struct sde_line_insertion_param {
  * @lm_roi        : Current LM ROI, possibly sub-rectangle of mode.
  *                  Origin top left of CRTC.
  * @user_roi_list : List of user's requested ROIs as from set property
- * @cached_user_roi_list : Copy of user_roi_list from previous PU frame
- * @property_state: Local storage for msm_prop properties
+  * @property_state: Local storage for msm_prop properties
  * @property_values: Current crtc property values
  * @input_fence_timeout_ns : Cached input fence timeout, in ns
  * @num_dim_layers: Number of dim layers
@@ -595,7 +596,7 @@ struct sde_crtc_state {
 	struct sde_rect crtc_roi;
 	struct sde_rect lm_bounds[MAX_MIXERS_PER_CRTC];
 	struct sde_rect lm_roi[MAX_MIXERS_PER_CRTC];
-	struct msm_roi_list user_roi_list, cached_user_roi_list;
+	struct msm_roi_list user_roi_list;
 
 	struct msm_property_state property_state;
 	struct msm_property_value property_values[CRTC_PROP_COUNT];
