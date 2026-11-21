@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #include <linux/module.h>
@@ -376,6 +376,7 @@ static int32_t cam_sensor_pkt_parse(struct cam_sensor_ctrl_t *s_ctrl,
 	uint32_t cmd_buf_type, idx;
 	struct cam_config_dev_cmd config;
 	struct i2c_data_settings *i2c_data = NULL;
+	bool is_sensor_read = false;
 
 	ioctl_ctrl = (struct cam_control *)arg;
 
@@ -433,6 +434,16 @@ static int32_t cam_sensor_pkt_parse(struct cam_sensor_ctrl_t *s_ctrl,
 
 	if (csl_packet->header.request_id > s_ctrl->last_flush_req)
 		s_ctrl->last_flush_req = 0;
+
+	if ((int64_t)csl_packet->header.request_id < 0) {
+		CAM_ERR(CAM_SENSOR,
+			"Invalid request_id: %lld for opcode: 0x%x on %s, rejecting packet",
+			(int64_t)csl_packet->header.request_id,
+			csl_packet->header.op_code & 0xFFFFFF,
+			s_ctrl->sensor_name);
+		rc = -EINVAL;
+		goto end;
+	}
 
 	prev_updated_req = s_ctrl->last_updated_req;
 	s_ctrl->is_res_info_updated = false;
@@ -496,6 +507,8 @@ static int32_t cam_sensor_pkt_parse(struct cam_sensor_ctrl_t *s_ctrl,
 			CAM_ERR(CAM_SENSOR, "I/O config is invalid(NULL)");
 			goto end;
 		}
+
+		is_sensor_read = true;
 		break;
 	}
 	case CAM_SENSOR_PACKET_OPCODE_SENSOR_UPDATE: {
@@ -626,6 +639,18 @@ static int32_t cam_sensor_pkt_parse(struct cam_sensor_ctrl_t *s_ctrl,
 			if (rc < 0) {
 				CAM_ERR(CAM_SENSOR, "Fail parsing I2C Pkt: %d", rc);
 				goto end;
+			}
+
+			if ((is_sensor_read) && (io_cfg != NULL)) {
+				mutex_lock(&(s_ctrl->read_buf_lock));
+				rc = cam_sensor_util_add_read_buf_to_list(&(s_ctrl->read_buf_list),
+					io_cfg->mem_handle[0]);
+				if (rc < 0) {
+					CAM_ERR(CAM_SENSOR, "Add read buf to list failed rc:%d", rc);
+					mutex_unlock(&(s_ctrl->read_buf_lock));
+					goto end;
+				}
+				mutex_unlock(&(s_ctrl->read_buf_lock));
 			}
 			break;
 		}
@@ -1942,6 +1967,9 @@ int32_t cam_sensor_driver_cmd(struct cam_sensor_ctrl_t *s_ctrl,
 	}
 
 release_mutex:
+	mutex_lock(&(s_ctrl->read_buf_lock));
+	cam_sensor_util_release_read_buf(&(s_ctrl->read_buf_list));
+	mutex_unlock(&(s_ctrl->read_buf_lock));
 	mutex_unlock(&(s_ctrl->cam_sensor_mutex));
 	return rc;
 

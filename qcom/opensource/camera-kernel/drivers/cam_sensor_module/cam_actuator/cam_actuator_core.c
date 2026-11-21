@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #include <linux/module.h>
@@ -881,6 +881,16 @@ int32_t cam_actuator_i2c_pkt_parse(struct cam_actuator_ctrl_t *a_ctrl,
 				"actuator read pkt parsing failed: %d", rc);
 			goto end;
 		}
+		mutex_lock(&(a_ctrl->read_buf_lock));
+		rc = cam_sensor_util_add_read_buf_to_list(&(a_ctrl->read_buf_list),
+			io_cfg->mem_handle[0]);
+		if (rc < 0) {
+			CAM_ERR(CAM_ACTUATOR, "Add read buf to list failed rc:%d", rc);
+			mutex_unlock(&(a_ctrl->read_buf_lock));
+			goto end;
+		}
+		mutex_unlock(&(a_ctrl->read_buf_lock));
+
 		// xiaomi change begin
 		// rc = cam_sensor_i2c_read_data(
 		// 	&i2c_read_settings,
@@ -1287,6 +1297,9 @@ int32_t cam_actuator_driver_cmd(struct cam_actuator_ctrl_t *a_ctrl,
 	}
 
 release_mutex:
+	mutex_lock(&(a_ctrl->read_buf_lock));
+	cam_sensor_util_release_read_buf(&(a_ctrl->read_buf_list));
+	mutex_unlock(&(a_ctrl->read_buf_lock));
 	mutex_unlock(&(a_ctrl->actuator_mutex));
 
 	return rc;

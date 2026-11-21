@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #include <linux/uaccess.h>
@@ -265,6 +265,7 @@ static int cam_jpeg_process_next_hw_update(void *priv, void *data,
 	cdm_cmd->userdata = NULL;
 	cdm_cmd->cookie = 0;
 	cdm_cmd->cmd_arrary_count = 0;
+	cdm_cmd->fast_complete = NULL;
 
 	/* insert cdm chage base cmd */
 	rc = cam_jpeg_insert_cdm_change_base(config_args,
@@ -691,8 +692,8 @@ static int cam_jpeg_insert_cdm_change_base(
 		return rc;
 	}
 
-	if (config_args->hw_update_entries[CAM_JPEG_CHBASE_CMD_BUFF_IDX].offset >=
-		ch_base_len) {
+	if ((config_args->hw_update_entries[CAM_JPEG_CHBASE_CMD_BUFF_IDX].offset +
+		(2 * sizeof(uint32_t))) >= ch_base_len) {
 		CAM_ERR(CAM_JPEG, "Not enough buf offset %d len %d",
 			config_args->hw_update_entries[CAM_JPEG_CHBASE_CMD_BUFF_IDX].offset,
 			ch_base_len);
@@ -1375,6 +1376,7 @@ static int cam_jpeg_mgr_release_hw(void *hw_mgr_priv, void *release_hw_args)
 		return -EINVAL;
 	}
 
+	mutex_lock(&hw_mgr->hw_mgr_mutex);
 	ctx_data = (struct cam_jpeg_hw_ctx_data *)release_hw->ctxt_to_hw_map;
 	if (!ctx_data->in_use) {
 		CAM_ERR(CAM_JPEG, "ctx is not in use");
@@ -1383,7 +1385,6 @@ static int cam_jpeg_mgr_release_hw(void *hw_mgr_priv, void *release_hw_args)
 	}
 	dev_type = ctx_data->jpeg_dev_acquire_info.dev_type;
 
-	mutex_lock(&hw_mgr->hw_mgr_mutex);
 	if (hw_mgr->cdm_info[dev_type][0].ref_cnt == 0) {
 		mutex_unlock(&hw_mgr->hw_mgr_mutex);
 		CAM_ERR(CAM_JPEG, "Error Unbalanced deinit");

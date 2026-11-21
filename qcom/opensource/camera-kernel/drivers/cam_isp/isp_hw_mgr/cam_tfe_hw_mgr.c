@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2019-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #include <linux/slab.h>
@@ -2457,7 +2457,7 @@ static int cam_tfe_mgr_acquire_dev(void *hw_mgr_priv, void *acquire_hw_args)
 			goto free_res;
 		}
 
-		in_port = memdup_user(
+		in_port = CAM_MEMDUP_USER(
 			u64_to_user_ptr(isp_resource[i].res_hdl),
 			isp_resource[i].length);
 		if (!IS_ERR(in_port)) {
@@ -2615,6 +2615,14 @@ static int cam_tfe_classify_vote_info(
 			for (i = 0; i < bw_config->num_paths; i++) {
 				if (bw_config->axi_path[i].usage_data ==
 					CAM_ISP_TFE_USAGE_LEFT_PX) {
+					if (j >= CAM_CPAS_MAX_PATHS_PER_CLIENT) {
+						CAM_ERR(CAM_ISP,
+							"%s: Exceeded max paths %d",
+							__func__,
+							CAM_CPAS_MAX_PATHS_PER_CLIENT);
+						return -EINVAL;
+					}
+
 					memcpy(&isp_vote->axi_path[j],
 						&bw_config->axi_path[i],
 						sizeof(struct
@@ -2632,6 +2640,14 @@ static int cam_tfe_classify_vote_info(
 			for (i = 0; i < bw_config->num_paths; i++) {
 				if (bw_config->axi_path[i].usage_data ==
 					CAM_ISP_TFE_USAGE_RIGHT_PX) {
+					if (j >= CAM_CPAS_MAX_PATHS_PER_CLIENT) {
+						CAM_ERR(CAM_ISP,
+							"%s: Exceeded max paths %d",
+							__func__,
+							CAM_CPAS_MAX_PATHS_PER_CLIENT);
+						return -EINVAL;
+					}
+
 					memcpy(&isp_vote->axi_path[j],
 						&bw_config->axi_path[i],
 						sizeof(struct
@@ -2653,6 +2669,14 @@ static int cam_tfe_classify_vote_info(
 				CAM_AXI_PATH_DATA_IFE_RDI0) ==
 				(hw_mgr_res->res_id -
 				CAM_ISP_HW_TFE_IN_RDI0))) {
+				if (j >= CAM_CPAS_MAX_PATHS_PER_CLIENT) {
+					CAM_ERR(CAM_ISP,
+						"%s: Exceeded max paths %d",
+						__func__,
+						CAM_CPAS_MAX_PATHS_PER_CLIENT);
+					return -EINVAL;
+				}
+
 				memcpy(&isp_vote->axi_path[j],
 					&bw_config->axi_path[i],
 					sizeof(struct
@@ -2869,6 +2893,7 @@ static int cam_tfe_mgr_config_hw(void *hw_mgr_priv,
 	cdm_cmd->cookie               = cfg->request_id;
 	cdm_cmd->gen_irq_arb          = false;
 	cdm_cmd->genirq_buff          = &hw_update_data->kmd_cmd_buff_info;
+	cdm_cmd->fast_complete        = NULL;
 
 	for (i = 0; i < cfg->num_hw_update_entries; i++) {
 		cmd = (cfg->hw_update_entries + i);

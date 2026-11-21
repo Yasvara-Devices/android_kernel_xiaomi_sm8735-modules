@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #ifndef _CAM_SENSOR_UTIL_H_
@@ -168,4 +168,9 @@ int cam_hw_notify_v4l2_error_event( char *name, void *ctrl, uint32_t id,
 
 uint32_t cam_hw_get_cci_ops(struct i2c_settings_list *i2c_list);
 //end
+
+int cam_sensor_util_add_read_buf_to_list(struct list_head *read_buf_list,
+	int32_t read_buffer_handle);
+
+void cam_sensor_util_release_read_buf(struct list_head *read_buf_list);
 #endif /* _CAM_SENSOR_UTIL_H_ */

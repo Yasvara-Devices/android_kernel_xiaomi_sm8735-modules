@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 #ifndef _CAM_OIS_DEV_H_
 #define _CAM_OIS_DEV_H_
@@ -109,6 +109,8 @@ struct cam_ois_intf_params {
  * @opcode          :   ois opcode
  * @device_name     :   Device name
  * @cci_debug       :   OIS debugfs info and entry
+ * @read_buf_list   :   ois register read cmd buffer handle list
+ * @read_buf_lock   :   ois register read cmd buffer mutex
  *
  */
 struct cam_ois_ctrl_t {
@@ -144,6 +146,8 @@ struct cam_ois_ctrl_t {
 	/* xiaomi add for cci debug end */
 	struct cam_ois_parklens_ctrl_t parklens_ctrl; //xiaomi add
 	struct i2c_settings_array i2c_parklens_data;  // xiaomi add
+	struct list_head read_buf_list;
+	struct mutex read_buf_lock;
 };
 
 /**

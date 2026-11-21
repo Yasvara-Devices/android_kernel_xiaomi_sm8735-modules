@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #include <linux/module.h>
@@ -528,13 +528,21 @@ static long cam_private_ioctl(struct file *file, void *fh,
 			return -ENOMEM;
 		}
 
+		/* Copy full struct (header + link_hdls[]) from userspace */
 		if (copy_from_user(sched_req, u64_to_user_ptr(k_ioctl->handle), sched_req_size)) {
 			CAM_MEM_FREE(sched_req);
 			sched_req = NULL;
 			return -EFAULT;
 		}
 
-		crm_sched_req.num_links = num_links;
+		/* Reject if header num_links mismatches validated value */
+		if (sched_req->num_links != num_links) {
+			CAM_ERR(CAM_CRM, "num_links mismatch: hdr:%d body:%d",
+				num_links, sched_req->num_links);
+			CAM_MEM_FREE(sched_req);
+			sched_req = NULL;
+			return -EINVAL;
+		}
 
 		rc = cam_req_mgr_schedule_request_v3(sched_req);
 		CAM_MEM_FREE(sched_req);
@@ -754,6 +762,11 @@ static long cam_private_ioctl(struct file *file, void *fh,
 		break;
 	case CAM_REQ_MGR_REQUEST_DUMP: {
 		struct cam_dump_req_cmd cmd;
+
+		if (!cam_debugfs_available()) {
+			CAM_DBG(CAM_CORE, "Dump request disabled");
+			return 0;
+		}
 
 		if (k_ioctl->size != sizeof(cmd))
 			return -EINVAL;
@@ -1251,6 +1264,8 @@ static int cam_req_mgr_probe(struct platform_device *pdev)
 	uint32_t device_heap_size = 0;
 	uint32_t session_heap_size = 0;
 #endif
+
+	cam_mem_trace_init();
 
 	for (i = 0; i < ARRAY_SIZE(cam_component_i2c_drivers); i++) {
 		while ((np = of_find_compatible_node(np, NULL,

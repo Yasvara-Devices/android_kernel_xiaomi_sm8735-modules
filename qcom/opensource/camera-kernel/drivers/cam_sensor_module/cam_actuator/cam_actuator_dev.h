@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017-2019, 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 
@@ -104,6 +104,8 @@ struct actuator_intf_params {
  * @of_node: Node ptr
  * @last_flush_req: Last request to flush
  * @cci_debug: Sensor debugfs info and entry
+ * @read_buf_list         : Actuator register read cmd buffer handle list
+ * @read_buf_lock         : Actuator register read cmd buffer mutex
  */
 struct cam_actuator_ctrl_t {
 	char device_name[CAM_CTX_DEV_NAME_MAX_LENGTH];
@@ -127,6 +129,8 @@ struct cam_actuator_ctrl_t {
 	void *cci_debug;
 	struct cam_actuator_parklens_ctrl_t parklens_ctrl;
 	/* xiaomi add for cci debug end */
+	struct list_head read_buf_list;
+	struct mutex read_buf_lock;
 };
 
 /**
