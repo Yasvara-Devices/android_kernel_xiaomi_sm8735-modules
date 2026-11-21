@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #include <linux/iommu.h>
@@ -631,8 +631,8 @@ void __unload_fw(struct msm_vidc_core *core)
 		return;
 
 	cancel_delayed_work(&core->pm_work);
-	fw_unload(core);
 	__venus_power_off(core);
+	fw_unload(core);
 
 	/* clear all substates */
 	msm_vidc_change_core_sub_state(core, CORE_SUBSTATE_MAX - 1, 0, __func__);
@@ -718,10 +718,18 @@ error:
 
 static int __response_handler(struct msm_vidc_core *core)
 {
-	struct msm_vidc_inst *instances[MAX_SUPPORTED_INSTANCES];
+	struct msm_vidc_inst **instances = NULL;
+	s32 max_supported_instances;
 	struct msm_vidc_inst *dummy, *inst = NULL;
 	s32 num_instances = 0;
 	int num_msg_pkts = 0, num_debug_pkts = 0, rc = 0;
+
+	max_supported_instances = core->capabilities[MAX_SESSION_COUNT].value;
+	instances = vzalloc(max_supported_instances * sizeof(struct msm_vidc_inst *));
+	if (!instances) {
+		d_vpr_e("%s: instances allocation failed\n", __func__);
+		return -ENOMEM;
+	}
 
 	if (call_venus_op(core, watchdog, core, core->intr_status)) {
 		struct hfi_packet pkt = {.type = HFI_SYS_ERROR_WD_TIMEOUT};
@@ -733,6 +741,7 @@ static int __response_handler(struct msm_vidc_core *core)
 			0, CORE_SUBSTATE_CPU_WATCHDOG, __func__);
 		d_vpr_e("%s: CPU WD error received\n", __func__);
 		core_unlock(core, __func__);
+		vfree(instances);
 
 		return handle_system_error(core, &pkt);
 	}
@@ -767,6 +776,8 @@ static int __response_handler(struct msm_vidc_core *core)
 	while (num_instances--)
 		put_inst(instances[num_instances]);
 
+	vfree(instances);
+
 	return rc;
 }
 
@@ -799,6 +810,8 @@ irqreturn_t venus_hfi_isr_handler(int irq, void *data)
 	core_unlock(core, __func__);
 
 	num_responses = __response_handler(core);
+	if (num_responses < 0)
+		d_vpr_e("%s: response handler failed: %d\n", __func__, num_responses);
 
 exit:
 	if (!call_venus_op(core, watchdog, core, core->intr_status))
