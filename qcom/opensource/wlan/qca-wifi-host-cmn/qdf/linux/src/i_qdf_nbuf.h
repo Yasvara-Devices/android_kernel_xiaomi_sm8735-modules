@@ -2028,6 +2028,7 @@ static inline void __qdf_flow_get_ipv6_dst_addr(struct flow_keys *flow,
 	memcpy(buf, &flow->addrs.v6addrs.dst, sizeof(flow->addrs.v6addrs.dst));
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0))
 /**
  * __qdf_nbuf_flow_get_ports() - extract the upper layer ports
  * @skb: Pointer to network buffer
@@ -2039,8 +2040,16 @@ static inline void __qdf_nbuf_flow_get_ports(const struct sk_buff *skb,
 					     struct flow_keys *flow)
 {
 	flow->ports.ports = skb_flow_get_ports(skb, flow->control.thoff,
-				  flow->basic.ip_proto);
+					       flow->basic.ip_proto, NULL, 0);
 }
+#else
+static inline void __qdf_nbuf_flow_get_ports(const struct sk_buff *skb,
+					     struct flow_keys *flow)
+{
+	flow->ports.ports = skb_flow_get_ports(skb, flow->control.thoff,
+					       flow->basic.ip_proto);
+}
+#endif /* KERNEL_VERSION(6, 15, 0)*/
 
 /**
  * __qdf_flow_parse_src_port() - parse src port from flow keys
@@ -3343,6 +3352,29 @@ static inline size_t __qdf_nbuf_l2l3l4_hdr_len(struct sk_buff *skb)
 static inline size_t __qdf_nbuf_get_tcp_hdr_len(struct sk_buff *skb)
 {
 	return tcp_hdrlen(skb);
+}
+
+/**
+ * __qdf_nbuf_get_mac_header() - get MAC header pointer
+ * @skb: Network buffer
+ *
+ * Return: MAC header pointer
+ */
+static inline void *__qdf_nbuf_get_mac_header(struct sk_buff *skb)
+{
+	return skb_mac_header(skb);
+}
+
+/**
+ * __qdf_nbuf_set_mac_header() - set MAC header
+ * @skb: Network buffer
+ * @offset: offset from data
+ *
+ * Return: None
+ */
+static inline void __qdf_nbuf_set_mac_header(struct sk_buff *skb, int offset)
+{
+	skb_set_mac_header(skb, offset);
 }
 
 /**

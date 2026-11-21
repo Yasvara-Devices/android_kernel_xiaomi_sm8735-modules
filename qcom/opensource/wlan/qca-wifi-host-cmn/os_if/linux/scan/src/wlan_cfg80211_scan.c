@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -1771,7 +1771,7 @@ wlan_cfg80211_send_scan_request_cached_report(
 				struct wlan_objmgr_pdev *pdev,
 				struct osif_scan_pdev *osif_scan,
 				bool is_cached_scan_reported_allowed,
-				uint32_t current_ts)
+				uint64_t current_ts)
 {
 	QDF_STATUS status;
 
@@ -1781,6 +1781,7 @@ wlan_cfg80211_send_scan_request_cached_report(
 				      WIFI_POWER_EVENT_WAKELOCK_SCAN);
 		qdf_runtime_pm_prevent_suspend(&osif_scan->runtime_pm_lock);
 
+		status = qdf_event_reset(&osif_scan->cache_scan_report_event);
 		if (qdf_atomic_inc_return(
 				&osif_scan->cache_scan_report_req_cnt) == 1) {
 			CLEAR_CACHED_SCAN_REPORT(osif_scan->cache_scan_report);
@@ -1790,7 +1791,6 @@ wlan_cfg80211_send_scan_request_cached_report(
 				goto cleanup;
 		}
 
-		status = qdf_event_reset(&osif_scan->cache_scan_report_event);
 		status = qdf_wait_for_event_completion(
 					&osif_scan->cache_scan_report_event,
 					SCAN_CACHE_REPORT_TIMEOUT_MS);
@@ -1997,6 +1997,8 @@ int wlan_cfg80211_scan(struct wlan_objmgr_vdev *vdev,
 	enum QDF_OPMODE opmode;
 	uint32_t extra_ie_len = 0;
 	struct scan_filter *filter = NULL;
+	bool is_passthru_present;
+	uint8_t num_6g_chan = 0;
 
 	psoc = wlan_pdev_get_psoc(pdev);
 	if (!psoc) {
@@ -2140,6 +2142,11 @@ int wlan_cfg80211_scan(struct wlan_objmgr_vdev *vdev,
 		req->scan_req.scan_f_5ghz = true;
 	}
 
+	is_passthru_present =
+		policy_mgr_mode_specific_connection_count(psoc,
+							  PM_PASSTHRU_MODE,
+							  NULL);
+
 	if (request->n_channels) {
 #ifdef WLAN_POLICY_MGR_ENABLE
 		bool ap_or_go_present = wlan_cfg80211_is_ap_go_present(psoc);
@@ -2149,7 +2156,7 @@ int wlan_cfg80211_scan(struct wlan_objmgr_vdev *vdev,
 			if (wlan_reg_is_dsrc_freq(c_freq))
 				continue;
 #ifdef WLAN_POLICY_MGR_ENABLE
-			if (ap_or_go_present) {
+			if (ap_or_go_present || is_passthru_present) {
 				bool ok;
 
 				qdf_status = policy_mgr_is_chan_ok_for_dnbs(
@@ -2180,6 +2187,10 @@ int wlan_cfg80211_scan(struct wlan_objmgr_vdev *vdev,
 				else
 					req->scan_req.chan_list.chan[num_chan].phymode =
 						SCAN_PHY_MODE_11A;
+
+				if (WLAN_REG_IS_6GHZ_CHAN_FREQ(c_freq))
+					num_6g_chan++;
+
 				num_chan++;
 				if (num_chan >= NUM_CHANNELS)
 					break;
@@ -2192,6 +2203,9 @@ int wlan_cfg80211_scan(struct wlan_objmgr_vdev *vdev,
 		goto err;
 	}
 	req->scan_req.chan_list.num_chan = num_chan;
+
+	if (is_passthru_present && !num_6g_chan)
+		req->scan_req.scan_f_skip_6ghz = 1;
 
 	/* P2P increase the scan priority */
 	if (is_p2p_scan)

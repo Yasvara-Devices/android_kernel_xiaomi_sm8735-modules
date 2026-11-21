@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -45,6 +45,9 @@
 #endif
 #ifdef WLAN_SUPPORT_FLOW_PRIORTIZATION
 #include "wlan_dp_api.h"
+#endif
+#ifdef WLAN_HAPS_ENABLE
+#include "wlan_dp_haps.h"
 #endif
 
 #define DP_TX_MAX_NUM_FRAGS 6
@@ -92,6 +95,7 @@ void dp_tx_update_eapol_comp_status_stats(struct dp_soc *soc,
 #define DP_TX_DESC_FLAG_SPECIAL         0x80000
 #define DP_TX_DESC_FLAG_BCAST           0x100000
 #define DP_TX_DESC_FLAG_OPT_DP_CTRL           0x200000
+#define DP_TX_DESC_FLAG_REAPED		0x400000
 
 #define DP_TX_EXT_DESC_FLAG_METADATA_VALID 0x1
 
@@ -229,6 +233,8 @@ struct dp_tx_queue {
  * @payload_addr:
  * @driver_ingress_ts: driver ingress timestamp
  * @is_opt_dp_ctrl: opt_dp_ctrl pkt
+ * @is_unicast: whether unicast frame or not
+ * @frame_type: 802.11 frame type
  *
  * This structure holds the complete MSDU information needed to program the
  * Hardware TCL and MSDU extension descriptors for different frame types
@@ -265,6 +271,10 @@ struct dp_tx_msdu_info_s {
 #endif
 #ifdef IPA_OPT_WIFI_DP_CTRL
 	bool is_opt_dp_ctrl;
+#endif
+#ifdef DRIVER_PASSTHRU_MODE
+	bool is_unicast;
+	uint8_t frame_type;
 #endif
 };
 
@@ -623,6 +633,97 @@ QDF_STATUS dp_tso_soc_detach(struct cdp_soc_t *txrx_soc);
  */
 qdf_nbuf_t dp_tx_send(struct cdp_soc_t *soc_hdl, uint8_t vdev_id,
 		      qdf_nbuf_t nbuf);
+
+#ifdef DRIVER_PASSTHRU_MODE
+/**
+ * dp_tx_send_passthru() - Simplified TX send function for passthrough mode
+ * @soc_hdl: CDP SoC handle
+ * @vdev_id: Virtual device ID
+ * @nbuf: Network buffer to transmit
+ *
+ * This is a simplified version of dp_tx_send() specifically designed for
+ * passthrough mode. It eliminates many checks and processing steps that
+ * are not needed in passthrough mode.
+ *
+ * Return: Network buffer on error, NULL on success
+ */
+qdf_nbuf_t dp_tx_send_passthru(struct cdp_soc_t *soc_hdl, uint8_t vdev_id,
+			       qdf_nbuf_t nbuf);
+
+/**
+ * dp_tx_comp_process_desc_passthru() - Process tx descriptor and free
+ *  associated nbuf
+ * @soc: DP Soc handle
+ * @desc: software Tx descriptor
+ * @ts: Tx completion status from HAL/HTT descriptor
+ * @txrx_peer: DP peer context
+ *
+ * Return: none
+ */
+void dp_tx_comp_process_desc_passthru(struct dp_soc *soc,
+				      struct dp_tx_desc_s *desc,
+				      struct hal_tx_completion_status *ts,
+				      struct dp_txrx_peer *txrx_peer);
+
+/**
+ * dp_tx_comp_process_tx_status_passthru() - Process TX completion status
+ * in passthrough mode
+ * @soc: DP soc handle
+ * @tx_desc: TX descriptor
+ * @ts: TX completion status from HAL
+ * @txrx_peer: DP peer handle
+ * @ring_id: Completion ring ID
+ *
+ * This is a streamlined version of dp_tx_comp_process_tx_status() optimized
+ * for passthrough mode. It skips various statistics collection and monitoring
+ * functions to reduce processing overhead.
+ *
+ * Return: None
+ */
+void dp_tx_comp_process_tx_status_passthru(struct dp_soc *soc,
+					   struct dp_tx_desc_s *tx_desc,
+					   struct hal_tx_completion_status *ts,
+					   struct dp_txrx_peer *txrx_peer,
+					   uint8_t ring_id);
+
+static inline
+void dp_tx_comp_process_tx_status_n_desc_wrapper(struct dp_soc *soc,
+						 struct dp_vdev *vdev,
+						 struct dp_tx_desc_s *tx_desc,
+						 struct hal_tx_completion_status *ts,
+						 struct dp_txrx_peer *txrx_peer,
+						 uint8_t ring_id)
+{
+	if (qdf_unlikely(vdev && vdev->opmode == wlan_op_mode_passthru)) {
+		dp_tx_comp_process_tx_status_passthru(soc, tx_desc, ts,
+						      txrx_peer, ring_id);
+		dp_tx_comp_process_desc_passthru(soc, tx_desc, ts, txrx_peer);
+		return;
+	}
+
+	dp_tx_comp_process_tx_status(soc, tx_desc, ts, txrx_peer, ring_id);
+	dp_tx_comp_process_desc(soc, tx_desc, ts, txrx_peer);
+}
+#else
+static inline
+qdf_nbuf_t dp_tx_send_passthru(struct cdp_soc_t *soc_hdl, uint8_t vdev_id,
+			       qdf_nbuf_t nbuf)
+{
+	return nbuf;
+}
+
+static inline
+void dp_tx_comp_process_tx_status_n_desc_wrapper(struct dp_soc *soc,
+						 struct dp_vdev *vdev,
+						 struct dp_tx_desc_s *tx_desc,
+						 struct hal_tx_completion_status *ts,
+						 struct dp_txrx_peer *txrx_peer,
+						 uint8_t ring_id)
+{
+	dp_tx_comp_process_tx_status(soc, tx_desc, ts, txrx_peer, ring_id);
+	dp_tx_comp_process_desc(soc, tx_desc, ts, txrx_peer);
+}
+#endif
 
 /**
  * dp_tx_send_vdev_id_check() - Transmit a frame on a given VAP in special
@@ -1589,6 +1690,42 @@ dp_tx_attempt_coalescing(struct dp_soc *soc, struct dp_vdev *vdev,
 }
 
 #endif /* WLAN_DP_FEATURE_SW_LATENCY_MGR */
+
+#ifdef WLAN_HAPS_ENABLE
+/**
+ * dp_try_hp_update() - Try HP update for all TCL rings
+ * @haps_ctx: Haps ctx pointer
+ * @is_direct_reg_write: To decide whether delayed reg write or direct reg
+ *			 is required
+ *
+ * Returns: QDF_STATUS
+ */
+QDF_STATUS dp_try_hp_update(struct dp_haps *haps_ctx, bool is_direct_reg_write);
+
+/**
+ * dp_tx_attempt_coalescing_wrapper() - Check and attempt TCL register write
+ *					coalescing
+ * @soc: Datapath soc handle
+ * @vdev: DP vdev handle
+ * @tx_desc: tx packet descriptor
+ * @tid: TID for pkt transmission
+ * @msdu_info: MSDU info of tx packet
+ * @ring_id: TCL ring id
+ *
+ * Return: 1, if coalescing is to be done
+ *	    0, if coalescing is not to be done
+ */
+int
+dp_tx_attempt_coalescing_wrapper(struct dp_soc *soc, struct dp_vdev *vdev,
+				 struct dp_tx_desc_s *tx_desc,
+				 uint8_t tid,
+				 struct dp_tx_msdu_info_s *msdu_info,
+				 uint8_t ring_id);
+#else
+#define \
+dp_tx_attempt_coalescing_wrapper(soc, vdev, tx_desc, tid, msdu_info, ring_id) \
+	dp_tx_attempt_coalescing(soc, vdev, tx_desc, tid, msdu_info, ring_id)
+#endif
 
 #ifdef FEATURE_RUNTIME_PM
 /**

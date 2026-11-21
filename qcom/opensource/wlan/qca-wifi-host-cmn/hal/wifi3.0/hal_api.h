@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -498,7 +498,6 @@ void hal_write_address_32_mb(struct hal_soc *hal_soc,
 	else
 		hal_write32_mb(hal_soc, offset, value);
 }
-
 
 #ifdef DP_HAL_MULTIWINDOW_DIRECT_ACCESS
 static inline void hal_srng_write_address_32_mb(struct hal_soc *hal_soc,
@@ -1887,6 +1886,42 @@ uint32_t hal_srng_dst_num_valid(void *hal_soc,
 }
 
 /**
+ * hal_srng_dst_peek_n() - Peek at the Nth entry beyond the current tail
+ *                         pointer without advancing tp/hp (read-only)
+ * @hal_soc: Opaque HAL SOC handle
+ * @hal_ring_hdl: Destination ring pointer
+ * @offset: number of entries beyond the current tp to peek at (0 = entry
+ *          at tp itself)
+ * @num_valid: number of valid entries currently available from tp,
+ *             e.g. as returned by hal_srng_dst_num_valid(). Callers that
+ *             peek repeatedly with an unchanged tp/cached_hp (as in a
+ *             loop) should compute this once and pass it in, instead of
+ *             recomputing it on every call.
+ *
+ * Uses the cached head pointer already synced by the caller; does not
+ * touch any HW registers or advance tp/cached_hp. Caller takes
+ * responsibility for any locking needs.
+ *
+ * Return: Opaque pointer to the requested ring entry; NULL if @offset is
+ *         beyond @num_valid
+ */
+static inline
+void *hal_srng_dst_peek_n(void *hal_soc, hal_ring_handle_t hal_ring_hdl,
+			  uint32_t offset, uint32_t num_valid)
+{
+	struct hal_srng *srng = (struct hal_srng *)hal_ring_hdl;
+	uint32_t idx;
+
+	if (offset >= num_valid)
+		return NULL;
+
+	idx = (srng->u.dst_ring.tp + offset * srng->entry_size) %
+		srng->ring_size;
+
+	return (void *)(&srng->ring_base_vaddr[idx]);
+}
+
+/**
  * hal_srng_dst_inv_cached_descs() - API to invalidate descriptors in batch mode
  * @hal_soc: Opaque HAL SOC handle
  * @hal_ring_hdl: Destination ring pointer
@@ -2642,6 +2677,17 @@ hal_srng_rtpm_access_end(hal_soc_handle_t hal_soc_hdl,
 /* hal_srng_access_end already handles endianness conversion, so use the same */
 #define hal_le_srng_access_end_in_cpu_order \
 	hal_srng_access_end
+
+static inline void
+hal_srng_update_hp_direct(void *hal_soc, hal_ring_handle_t hal_ring_hdl)
+{
+	struct hal_srng *srng = (struct hal_srng *)hal_ring_hdl;
+
+	if (srng->ring_dir == HAL_SRNG_SRC_RING)
+		hal_write_address_32_mb(hal_soc, srng->u.src_ring.hp_addr,
+					srng->u.src_ring.hp, false);
+	SRNG_UNLOCK(&srng->lock);
+}
 
 /**
  * hal_srng_access_end_reap() - Unlock ring access
@@ -3697,6 +3743,20 @@ uint32_t hal_srng_src_get_hp(hal_ring_handle_t hal_ring_hdl)
 	struct hal_srng *srng = (struct hal_srng *)hal_ring_hdl;
 
 	return srng->u.src_ring.hp;
+}
+
+/**
+ * hal_srng_src_get_cached_tp() - get cached tp idx.
+ * @hal_ring_hdl: srng handle
+ *
+ * Return: Cached tail idx
+ */
+static inline
+uint32_t hal_srng_src_get_cached_tp(hal_ring_handle_t hal_ring_hdl)
+{
+	struct hal_srng *srng = (struct hal_srng *)hal_ring_hdl;
+
+	return srng->u.src_ring.cached_tp;
 }
 
 /**

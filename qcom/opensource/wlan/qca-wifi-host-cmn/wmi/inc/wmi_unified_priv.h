@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2013-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -778,9 +778,6 @@ QDF_STATUS (*send_set_sta_uapsd_auto_trig_cmd)(wmi_unified_t wmi_handle,
 #ifdef WLAN_FEATURE_DSRC
 QDF_STATUS (*send_ocb_set_utc_time_cmd)(wmi_unified_t wmi_handle,
 				struct ocb_utc_param *utc);
-
-QDF_STATUS (*send_ocb_get_tsf_timer_cmd)(wmi_unified_t wmi_handle,
-			  uint8_t vdev_id);
 
 QDF_STATUS (*send_ocb_start_timing_advert_cmd)(wmi_unified_t wmi_handle,
 	struct ocb_timing_advert_param *timing_advert);
@@ -2205,6 +2202,10 @@ QDF_STATUS (*extract_peer_adv_stats)(wmi_unified_t wmi_handle, void *evt_buf,
 QDF_STATUS (*extract_chan_stats)(wmi_unified_t wmi_handle, void *evt_buf,
 			 uint32_t index, wmi_host_chan_stats *chan_stats);
 
+QDF_STATUS (*extract_recv_bcn_stats)(
+			wmi_unified_t wmi_handle, void *evt_buf, uint32_t index,
+			struct wmi_host_recv_bcn_stats *recv_bcn_stats);
+
 #ifdef WLAN_FEATURE_MIB_STATS
 QDF_STATUS (*extract_mib_stats)(wmi_unified_t wmi_handle, void *evt_buf,
 				struct mib_stats_metrics *mib_stats);
@@ -3610,6 +3611,23 @@ QDF_STATUS (*send_get_cached_scan_report_cmd)(wmi_unified_t wmi_handle);
 
 void *(*extract_cached_scan_report_ev_params)(wmi_unified_t wmi_handle,
 					      void *ev_data, uint32_t data_len);
+#endif
+#ifdef DRIVER_PASSTHRU_MODE
+QDF_STATUS
+	(*send_vdev_ch_hop_sched_cmd)(wmi_unified_t wmi_handle,
+				      struct vdev_ch_hop_sched_params *param);
+QDF_STATUS
+	(*send_vdev_get_chan_hop_status_cmd)(wmi_unified_t wmi_handle,
+					     uint8_t vdev_id);
+QDF_STATUS
+(*extract_vdev_chan_hop_status)(wmi_unified_t wmi_handle,
+				void *evt_buf,
+				struct vdev_chan_hop_status_response *resp);
+#endif
+
+#if defined(DRIVER_PASSTHRU_MODE) || defined(WLAN_FEATURE_DSRC)
+QDF_STATUS (*send_ocb_get_tsf_timer_cmd)(wmi_unified_t wmi_handle,
+					 uint8_t vdev_id);
 #endif
 };
 
