@@ -42,14 +42,12 @@ qdf_net_if_create_dummy_if(struct qdf_net_if **nif)
 QDF_STATUS
 qdf_net_if_create_dummy_if(struct qdf_net_if **nif)
 {
-	int ret;
-
 	if (!(*nif))
 		return QDF_STATUS_E_INVAL;
 
-	ret = init_dummy_netdev((struct net_device *)*nif);
+	init_dummy_netdev((struct net_device *)*nif);
 
-	return qdf_status_from_os_return(ret);
+	return QDF_STATUS_SUCCESS;
 }
 #endif
 
