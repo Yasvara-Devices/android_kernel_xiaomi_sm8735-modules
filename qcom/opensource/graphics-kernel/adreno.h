@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2008-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 #ifndef __ADRENO_H
 #define __ADRENO_H
@@ -177,6 +177,8 @@
 #define ADRENO_CLX BIT(20)
 /* Enable GMU support for GMU based thermal mitigation */
 #define ADRENO_GMU_THERMAL_MITIGATION BIT(21)
+/* Enable GMU Based AB voting */
+#define ADRENO_GMU_AB BIT(22)
 
 /*
  * Adreno GPU quirks - control bits for various workarounds
@@ -1802,7 +1804,7 @@ static inline void adreno_perfcntr_active_oob_put(
 static inline int adreno_wait_for_halt_ack(struct kgsl_device *device,
 	int ack_reg, unsigned int mask)
 {
-	u32 val;
+	u32 val = 0;
 	int ret = kgsl_regmap_read_poll_timeout(&device->regmap, ack_reg,
 		val, (val & mask) == mask, 100, 100 * 1000);
 

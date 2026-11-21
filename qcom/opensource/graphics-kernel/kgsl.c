@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2008-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2025, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #include <uapi/linux/sched/types.h>
@@ -37,6 +37,7 @@
 #include "kgsl_sync.h"
 #include "kgsl_sysfs.h"
 #include "kgsl_trace.h"
+#include "kgsl_util.h"
 /* Instantiate tracepoints */
 #define CREATE_TRACE_POINTS
 #include "kgsl_power_trace.h"
@@ -330,7 +331,7 @@ static void kgsl_destroy_ion(struct kgsl_memdesc *memdesc)
 		struct kgsl_mem_entry, memdesc);
 	struct kgsl_dma_buf_meta *metadata = entry->priv_data;
 
-	if (memdesc->priv & KGSL_MEMDESC_MAPPED)
+	if (TEST_FLAG(KGSL_MEMDESC_MAPPED, &memdesc->priv))
 		return;
 
 	if (metadata != NULL) {
@@ -347,6 +348,7 @@ static void kgsl_destroy_ion(struct kgsl_memdesc *memdesc)
 	}
 
 	memdesc->sgt = NULL;
+	entry->priv_data = NULL;
 }
 
 static const struct kgsl_memdesc_ops kgsl_dmabuf_ops = {
@@ -361,7 +363,7 @@ static void kgsl_destroy_anon(struct kgsl_memdesc *memdesc)
 	struct scatterlist *sg;
 	struct page *page;
 
-	if (memdesc->priv & KGSL_MEMDESC_MAPPED)
+	if (TEST_FLAG(KGSL_MEMDESC_MAPPED, &memdesc->priv))
 		return;
 
 	for_each_sg(memdesc->sgt->sgl, sg, memdesc->sgt->nents, i) {
@@ -569,7 +571,7 @@ static void kgsl_mem_entry_detach_process(struct kgsl_mem_entry *entry)
 
 	kgsl_sharedmem_put_gpuaddr(&entry->memdesc);
 
-	if (entry->memdesc.priv & KGSL_MEMDESC_RECLAIMED)
+	if (TEST_FLAG(KGSL_MEMDESC_RECLAIMED, &entry->memdesc.priv))
 		atomic_sub(entry->memdesc.page_count,
 					&entry->priv->unpinned_page_count);
 
@@ -981,6 +983,7 @@ static void kgsl_destroy_process_private(struct kref *kref)
 
 	kfree(private->cmdline);
 	put_pid(private->pid);
+	mmdrop(private->mm);
 	idr_destroy(&private->mem_idr);
 	idr_destroy(&private->syncsource_idr);
 
@@ -1112,7 +1115,7 @@ static void _log_gpu_work_events(struct work_struct *work)
 
 static void kgsl_work_period_timer(struct timer_list *t)
 {
-	struct kgsl_device *device = from_timer(device, t, work_period_timer);
+	struct kgsl_device *device = kgsl_timer_container_of(device, t, work_period_timer);
 
 	queue_work(kgsl_driver.lockless_workqueue, &device->work_period_ws);
 }
@@ -1197,6 +1200,8 @@ static struct kgsl_process_private *kgsl_process_private_new(
 
 	private->fd_count = 1;
 	private->pid = cur_pid;
+	private->mm = current->mm;
+	mmgrab(current->mm);
 	get_task_comm(private->comm, current->group_leader);
 	private->cmdline = kstrdup_quotable_cmdline(current, GFP_KERNEL);
 
@@ -1219,6 +1224,7 @@ static struct kgsl_process_private *kgsl_process_private_new(
 		idr_destroy(&private->mem_idr);
 		idr_destroy(&private->syncsource_idr);
 		put_pid(private->pid);
+		mmdrop(private->mm);
 
 		kfree(private);
 		private = ERR_PTR(err);
@@ -3026,16 +3032,15 @@ static int kgsl_setup_anon_useraddr(struct kgsl_device *device, struct kgsl_page
 	entry->memdesc.ops = &kgsl_usermem_ops;
 
 	if (kgsl_memdesc_use_cpu_map(&entry->memdesc)) {
-
 		/* Register the address in the database */
 		ret = kgsl_mmu_set_svm_region(pagetable,
-			(uint64_t) hostptr, (uint64_t) size);
+			&entry->memdesc, (uint64_t) hostptr, (uint64_t) size);
 
 		/* if OOM, retry once after flushing lockless_workqueue */
 		if (ret == -ENOMEM) {
 			flush_workqueue(kgsl_driver.lockless_workqueue);
 			ret = kgsl_mmu_set_svm_region(pagetable,
-				(uint64_t) hostptr, (uint64_t) size);
+				&entry->memdesc, (uint64_t) hostptr, (uint64_t) size);
 		}
 
 		if (ret)
@@ -3139,7 +3144,7 @@ static long _gpuobj_map_dma_buf(struct kgsl_device *device,
 		if (!check_and_warn_secured(device))
 			return -ENOTSUPP;
 
-		entry->memdesc.priv |= KGSL_MEMDESC_SECURE;
+		SET_FLAG(KGSL_MEMDESC_SECURE, &entry->memdesc.priv);
 	}
 
 	if (copy_struct_from_user(&buf, sizeof(buf),
@@ -3316,7 +3321,7 @@ static int _map_usermem_dma_buf(struct kgsl_device *device,
 		if (!check_and_warn_secured(device))
 			return -EOPNOTSUPP;
 
-		entry->memdesc.priv |= KGSL_MEMDESC_SECURE;
+		SET_FLAG(KGSL_MEMDESC_SECURE, &entry->memdesc.priv);
 	}
 
 	dmabuf = dma_buf_get(fd);
@@ -3343,7 +3348,7 @@ static int _map_usermem_dma_buf(struct kgsl_device *device,
 static int verify_secure_access(struct kgsl_device *device,
 	struct kgsl_mem_entry *entry, struct dma_buf *dmabuf)
 {
-	bool secure = entry->memdesc.priv & KGSL_MEMDESC_SECURE;
+	bool secure = TEST_FLAG(KGSL_MEMDESC_SECURE, &entry->memdesc.priv);
 	uint32_t *vmid_list = NULL, *perms_list = NULL;
 	uint32_t nelems = 0;
 	int i;
@@ -4191,7 +4196,7 @@ gpumem_alloc_vbo_entry(struct kgsl_device_private *dev_priv,
 	}
 
 	if (flags & KGSL_MEMFLAGS_SECURE)
-		entry->memdesc.priv |= KGSL_MEMDESC_SECURE;
+		SET_FLAG(KGSL_MEMDESC_SECURE, &entry->memdesc.priv);
 
 	ret = kgsl_mem_entry_attach_to_process(device, private, entry);
 	if (ret)
@@ -4285,7 +4290,7 @@ struct kgsl_mem_entry *gpumem_alloc_entry(
 			(!(flags & KGSL_MEMFLAGS_IOCOHERENT) &&
 			 !(cachemode == KGSL_CACHEMODE_WRITEBACK) &&
 			!(cachemode == KGSL_CACHEMODE_WRITETHROUGH))))
-		entry->memdesc.priv |= KGSL_MEMDESC_CAN_RECLAIM;
+		SET_FLAG(KGSL_MEMDESC_CAN_RECLAIM, &entry->memdesc.priv);
 
 	kgsl_process_add_stats(private,
 			kgsl_memdesc_usermem_type(&entry->memdesc),
@@ -4589,6 +4594,12 @@ kgsl_mmap_memstore(struct file *file, struct kgsl_device *device,
 	vma->vm_ops = &kgsl_memstore_vm_ops;
 	vma->vm_file = file;
 
+	/*
+	 * We use vm_pgoff to identify the memstore at mmap time. It has a different meaning to
+	 * other kernel layers so reset it to 0.
+	 */
+	vma->vm_pgoff = 0;
+
 	return 0;
 }
 
@@ -4601,8 +4612,10 @@ static void kgsl_gpumem_vm_open(struct vm_area_struct *vma)
 {
 	struct kgsl_mem_entry *entry = vma->vm_private_data;
 
-	if (!kgsl_mem_entry_get(entry))
+	if (!kgsl_mem_entry_get(entry)) {
 		vma->vm_private_data = NULL;
+		return;
+	}
 
 	atomic_inc(&entry->map_count);
 }
@@ -4700,29 +4713,11 @@ static unsigned long _gpu_set_svm_region(struct kgsl_process_private *private,
 {
 	int ret;
 
-	/*
-	 * Protect access to the gpuaddr here to prevent multiple vmas from
-	 * trying to map a SVM region at the same time
-	 */
-	spin_lock(&entry->memdesc.lock);
+	ret = kgsl_mmu_set_svm_region(private->pagetable,  &entry->memdesc,
+		(uint64_t) addr, (uint64_t) size);
 
-	if (entry->memdesc.gpuaddr) {
-		spin_unlock(&entry->memdesc.lock);
-		return (unsigned long) -EBUSY;
-	}
-
-	ret = kgsl_mmu_set_svm_region(private->pagetable, (uint64_t) addr,
-		(uint64_t) size);
-
-	if (ret != 0) {
-		spin_unlock(&entry->memdesc.lock);
+	if (ret != 0)
 		return (unsigned long) ret;
-	}
-
-	entry->memdesc.gpuaddr = (uint64_t) addr;
-	spin_unlock(&entry->memdesc.lock);
-
-	entry->memdesc.pagetable = private->pagetable;
 
 	ret = kgsl_mmu_map(private->pagetable, &entry->memdesc);
 	if (ret) {
@@ -4736,9 +4731,9 @@ static unsigned long _gpu_set_svm_region(struct kgsl_process_private *private,
 	return addr;
 }
 
-static unsigned long get_align(struct kgsl_mem_entry *entry)
+unsigned long kgsl_get_align(struct kgsl_memdesc *memdesc)
 {
-	int bit = kgsl_memdesc_get_align(&entry->memdesc);
+	u32 bit = kgsl_memdesc_get_align(memdesc);
 
 	if (bit >= ilog2(SZ_2M))
 		return SZ_2M;
@@ -4747,7 +4742,7 @@ static unsigned long get_align(struct kgsl_mem_entry *entry)
 	else if (bit >= ilog2(SZ_64K))
 		return SZ_64K;
 
-	return SZ_4K;
+	return PAGE_SIZE;
 }
 
 static unsigned long set_svm_area(struct file *file,
@@ -4780,7 +4775,7 @@ static unsigned long get_svm_unmapped_area(struct file *file,
 {
 	struct kgsl_device_private *dev_priv = file->private_data;
 	struct kgsl_process_private *private = dev_priv->process_priv;
-	unsigned long align = get_align(entry);
+	unsigned long align = kgsl_get_align(&entry->memdesc);
 	unsigned long ret, iova;
 	u64 start = 0, end = 0;
 	struct vm_area_struct *vma;
@@ -4898,6 +4893,9 @@ static int kgsl_mmap(struct file *file, struct vm_area_struct *vma)
 	struct kgsl_device *device = dev_priv->device;
 	uint64_t flags;
 	int ret;
+
+	if (vma->vm_mm != private->mm)
+		return -EACCES;
 
 	/* Handle leagacy behavior for memstore */
 

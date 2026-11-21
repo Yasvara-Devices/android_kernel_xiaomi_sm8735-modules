@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #include <dt-bindings/power/qcom-rpmpd.h>
@@ -787,7 +787,7 @@ static int find_vma_block(struct a6xx_gmu_device *gmu, u32 addr, u32 size)
 {
 	int i;
 
-	for (i = 0; i < GMU_MEM_TYPE_MAX; i++) {
+	for (i = 0; i < gmu->num_vmas; i++) {
 		struct gmu_vma_entry *vma = &gmu->vma[i];
 
 		if ((addr >= vma->start) &&
@@ -2683,7 +2683,7 @@ static void a6xx_free_gmu_globals(struct a6xx_gmu_device *gmu)
 
 		iommu_unmap(device->gmu_core.domain, md->gmuaddr, md->size);
 
-		if (md->priv & KGSL_MEMDESC_SYSMEM)
+		if (TEST_FLAG(KGSL_MEMDESC_SYSMEM, &md->priv))
 			kgsl_sharedmem_free(md);
 
 		memset(md, 0, sizeof(*md));
@@ -2920,10 +2920,13 @@ int a6xx_gmu_probe(struct kgsl_device *device,
 	if (ret)
 		goto error;
 
-	if (adreno_is_a650_family(adreno_dev))
+	if (adreno_is_a650_family(adreno_dev)) {
 		gmu->vma = a6xx_gmu_vma;
-	else
+		gmu->num_vmas = ARRAY_SIZE(a6xx_gmu_vma);
+	} else {
 		gmu->vma = a6xx_gmu_vma_legacy;
+		gmu->num_vmas = ARRAY_SIZE(a6xx_gmu_vma_legacy);
+	}
 
 	/* Map and reserve GMU CSRs registers */
 	ret = a6xx_gmu_reg_probe(adreno_dev);

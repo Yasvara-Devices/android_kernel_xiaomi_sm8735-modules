@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #include <linux/kthread.h>
@@ -52,11 +52,11 @@ static void kgsl_memdesc_clear_unevictable(struct kgsl_process_private *process,
 	folio_batch_init(&fbatch);
 	for (i = 0; i < memdesc->page_count; i++) {
 		set_page_dirty_lock(memdesc->pages[i]);
-		spin_lock(&memdesc->lock);
+		mutex_lock(&memdesc->lock);
 		folio_batch_add(&fbatch, page_folio(memdesc->pages[i]));
 		memdesc->pages[i] = NULL;
 		atomic_inc(&process->unpinned_page_count);
-		spin_unlock(&memdesc->lock);
+		mutex_unlock(&memdesc->lock);
 		if (folio_batch_count(&fbatch) == PAGEVEC_SIZE) {
 			check_move_unevictable_folios(&fbatch);
 			__folio_batch_release(&fbatch);
@@ -102,11 +102,11 @@ static void kgsl_memdesc_clear_unevictable(struct kgsl_process_private *process,
 	pagevec_init(&pvec);
 	for (i = 0; i < memdesc->page_count; i++) {
 		set_page_dirty_lock(memdesc->pages[i]);
-		spin_lock(&memdesc->lock);
+		mutex_lock(&memdesc->lock);
 		pagevec_add(&pvec, memdesc->pages[i]);
 		memdesc->pages[i] = NULL;
 		atomic_inc(&process->unpinned_page_count);
-		spin_unlock(&memdesc->lock);
+		mutex_unlock(&memdesc->lock);
 		if (pagevec_count(&pvec) == PAGEVEC_SIZE) {
 			check_move_unevictable_pages(&pvec);
 			__pagevec_release(&pvec);
@@ -133,10 +133,12 @@ static int kgsl_memdesc_get_reclaimed_pages(struct kgsl_mem_entry *entry)
 	int i, ret;
 	struct page *page = NULL;
 
+	mutex_lock(&memdesc->lock);
 	for (i = 0; i < memdesc->page_count; i++) {
 		if (memdesc->pages[i])
 			continue;
 
+		mutex_unlock(&memdesc->lock);
 		ret = kgsl_read_mapping(memdesc, &page, i);
 		if (ret)
 			return ret;
@@ -147,14 +149,14 @@ static int kgsl_memdesc_get_reclaimed_pages(struct kgsl_mem_entry *entry)
 		 * Update the pages array only if vmfault has not
 		 * updated it meanwhile
 		 */
-		spin_lock(&memdesc->lock);
+		mutex_lock(&memdesc->lock);
 		if (!memdesc->pages[i]) {
 			memdesc->pages[i] = page;
 			atomic_dec(&entry->priv->unpinned_page_count);
 		} else
 			put_page(page);
-		spin_unlock(&memdesc->lock);
 	}
+	mutex_unlock(&memdesc->lock);
 
 	ret = kgsl_mmu_map(memdesc->pagetable, memdesc);
 	if (ret)
@@ -162,8 +164,7 @@ static int kgsl_memdesc_get_reclaimed_pages(struct kgsl_mem_entry *entry)
 
 	trace_kgsl_reclaim_memdesc(entry, false);
 
-	memdesc->priv &= ~KGSL_MEMDESC_RECLAIMED;
-	memdesc->priv &= ~KGSL_MEMDESC_SKIP_RECLAIM;
+	CLEAR_FLAG(KGSL_MEMDESC_RECLAIMED | KGSL_MEMDESC_SKIP_RECLAIM, &memdesc->priv);
 
 	return 0;
 }
@@ -190,7 +191,7 @@ int kgsl_reclaim_to_pinned_state(
 			break;
 		}
 
-		if (entry->memdesc.priv & KGSL_MEMDESC_RECLAIMED)
+		if (TEST_FLAG(KGSL_MEMDESC_RECLAIMED, &entry->memdesc.priv))
 			valid_entry = kgsl_mem_entry_get(entry);
 		spin_unlock(&process->mem_lock);
 
@@ -310,7 +311,7 @@ static u32 kgsl_reclaim_process(struct kgsl_process_private *process,
 {
 	struct kgsl_memdesc *memdesc;
 	struct kgsl_mem_entry *entry, *valid_entry;
-	u32 next = 0, remaining = pages_to_reclaim;
+	u32 next = 0, remaining = pages_to_reclaim, priv = 0;
 
 	/*
 	 * If we do not get the lock here, it means that the buffers are
@@ -343,10 +344,11 @@ static u32 kgsl_reclaim_process(struct kgsl_process_private *process,
 		}
 
 		memdesc = &entry->memdesc;
+		priv = atomic_read(&memdesc->priv);
 		if (!entry->pending_free &&
-				(memdesc->priv & KGSL_MEMDESC_CAN_RECLAIM) &&
-				!(memdesc->priv & KGSL_MEMDESC_RECLAIMED) &&
-				!(memdesc->priv & KGSL_MEMDESC_SKIP_RECLAIM))
+				(priv & KGSL_MEMDESC_CAN_RECLAIM) &&
+				!(priv & KGSL_MEMDESC_RECLAIMED) &&
+				!(priv & KGSL_MEMDESC_SKIP_RECLAIM))
 			valid_entry = kgsl_mem_entry_get(entry);
 		spin_unlock(&process->mem_lock);
 
@@ -380,7 +382,7 @@ static u32 kgsl_reclaim_process(struct kgsl_process_private *process,
 			remaining -= memdesc->page_count;
 			reclaim_shmem_address_space(memdesc->shmem_filp->f_mapping);
 			mapping_set_unevictable(memdesc->shmem_filp->f_mapping);
-			memdesc->priv |= KGSL_MEMDESC_RECLAIMED;
+			SET_FLAG(KGSL_MEMDESC_RECLAIMED, &memdesc->priv);
 			trace_kgsl_reclaim_memdesc(entry, true);
 		}
 
