@@ -9,6 +9,14 @@
 
 #include <linux/pci.h>
 #include "cnss_utils.h"
+#ifdef CONFIG_SDIO_QCN
+#include <linux/mmc/sdio_func.h>
+#ifdef CONFIG_CNSS_OUT_OF_TREE
+#include "qcn_sdio_al.h"
+#else
+#include <linux/qcn_sdio_al.h>
+#endif
+#endif
 
 #define CNSS_MAX_FILE_NAME		20
 #define CNSS_MAX_TIMESTAMP_LEN		32
@@ -82,6 +90,8 @@ struct cnss_wlan_runtime_ops {
 	int (*runtime_resume)(struct pci_dev *pdev);
 };
 
+typedef void (*wlan_tsf_handler_t)(void *, uint64_t);
+
 enum cnss_driver_status {
 	CNSS_UNINITIALIZED,
 	CNSS_INITIALIZED,
@@ -123,6 +133,28 @@ struct cnss_uevent_data {
 	enum cnss_driver_status status;
 	void *data;
 };
+
+#ifdef CONFIG_SDIO_QCN
+struct cnss_sdio_wlan_driver {
+	const char *name;
+	const struct sdio_device_id *id_table;
+	int (*probe)(struct sdio_func *, const struct sdio_device_id *);
+	void (*remove)(struct sdio_func *);
+	int (*reinit)(struct sdio_func *, const struct sdio_device_id *);
+	void (*shutdown)(struct sdio_func *);
+	void (*crash_shutdown)(struct sdio_func *);
+	int (*suspend)(struct device *);
+	int (*resume)(struct device *);
+	int (*runtime_suspend)(struct device *);
+	int (*runtime_resume)(struct device *);
+	void (*update_status)(struct sdio_func *, enum cnss_driver_status status);
+	int  (*update_event)(struct sdio_func *, struct cnss_uevent_data *uevent);
+	int (*idle_shutdown)(struct sdio_func *);
+	int (*idle_restart)(struct sdio_func *);
+	int (*set_therm_cdev_state)(struct sdio_func *sdio_func,
+				    unsigned long thermal_state, int tcdev_id);
+};
+#endif
 
 struct cnss_wlan_driver {
 	char *name;
@@ -188,6 +220,10 @@ struct cnss_shadow_reg_v3_cfg {
 	u32 addr;
 };
 
+struct cnss_wlan_host_param {
+	const char *chip_name;
+};
+
 struct cnss_wlan_enable_cfg {
 	u32 num_ce_tgt_cfg;
 	struct cnss_ce_tgt_pipe_cfg *ce_tgt_cfg;
@@ -230,6 +266,7 @@ enum cnss_fw_caps {
 	CNSS_FW_CAP_CALDB_SEG_DDR_SUPPORT,
 	CNSS_FW_CAP_WLAN_DUMP_OVER_BT_SUPPORT,
 	CNSS_FW_CAP_BT_DUMP_OVER_WLAN_SUPPORT,
+	CNSS_FW_CAP_DIRECT_REFILL_SUPPORT,
 };
 
 enum cnss_remote_mem_type {
@@ -268,6 +305,7 @@ extern int cnss_get_fw_files_for_target(struct device *dev,
 					u32 target_type, u32 target_version);
 extern int cnss_get_platform_cap(struct device *dev,
 				 struct cnss_platform_cap *cap);
+extern bool cnss_smmu_s1_enabled(struct device *dev);
 extern struct iommu_domain *cnss_smmu_get_domain(struct device *dev);
 extern int cnss_smmu_map(struct device *dev,
 			 phys_addr_t paddr, uint32_t *iova_addr, size_t size);
@@ -302,6 +340,8 @@ extern bool cnss_is_one_msi(struct device *dev);
 extern void cnss_get_msi_address(struct device *dev, uint32_t *msi_addr_low,
 				 uint32_t *msi_addr_high);
 extern int cnss_wlan_hw_enable(void);
+extern int cnss_set_host_param(struct device *dev,
+			       struct cnss_wlan_host_param *param);
 extern int cnss_wlan_enable(struct device *dev,
 			    struct cnss_wlan_enable_cfg *config,
 			    enum cnss_driver_mode mode,
@@ -337,7 +377,11 @@ extern int cnss_send_buffer_to_afcmem(struct device *dev, const uint8_t *afcdb,
 extern int cnss_reset_afcmem(struct device *dev, uint8_t slotid);
 extern bool cnss_get_fw_cap(struct device *dev, enum cnss_fw_caps fw_cap);
 extern bool cnss_audio_is_direct_link_supported(struct device *dev);
-extern int cnss_get_wlan_tsf_gpio(struct device *dev);
+extern int cnss_register_tsf_captured_handler(struct device *dev,
+					      wlan_tsf_handler_t handler,
+					      void *ctx);
+extern int cnss_unregister_tsf_captured_handler(struct device *dev,
+						void *ctx);
 extern bool cnss_ipa_wlan_shared_smmu_supported(struct device *dev);
 extern int cnss_set_wfc_mode(struct device *dev, struct cnss_wfc_cfg cfg);
 extern int cnss_thermal_cdev_register(struct device *dev,
@@ -359,5 +403,93 @@ extern void cnss_get_cpumask_for_wlan_rx_interrupts(struct device *dev,
 extern void cnss_get_cpumask_for_wlan_tx_comp_interrupts(struct device *dev,
 							 unsigned int *cpumask);
 extern int cnss_set_cxpc(struct device *dev, enum cxpc_status arg);
+extern int cnss_pci_get_iova_info(struct device *dev, u64 *addr, u64 *size);
+extern int cnss_set_vendor_wonder_priv_data(const void *priv_data);
+extern bool cnss_get_napi_ipi_redirect_enabled(struct device *dev);
+
+#ifdef CONFIG_SDIO_QCN
+extern int cnss_sdio_wlan_register_driver(struct cnss_sdio_wlan_driver *driver_ops);
+extern void cnss_sdio_wlan_unregister_driver(struct cnss_sdio_wlan_driver *driver_ops);
+extern struct sdio_al_client_handle *cnss_sdio_wlan_get_sdio_al_client_handle(
+						       struct sdio_func *func);
+extern struct sdio_al_channel_handle *cnss_sdio_wlan_register_sdio_al_channel(
+				    struct sdio_al_channel_data *channel_data);
+extern void cnss_sdio_wlan_unregister_sdio_al_channel(
+	     struct sdio_al_channel_handle *ch_handle);
+extern int cnss_sdio_wlan_enable_subsys(void);
+extern int cnss_sdio_wlan_disable_subsys(void);
+extern int cnss_sdio_wlan_time_sync(void);
+extern void cnss_fw_ready_ind_event(struct device *dev);
+extern int cnss_sdio_get_soc_info(struct cnss_soc_info *soc_info);
+extern u64 cnss_get_tsf_irq_ts(struct device *dev);
+extern int cnss2_sdio_force_fw_assert(struct device *dev);
+extern int cnss_wlan_gpio_register(void);
+extern int cnss_wlan_gpio_deregister(void);
+extern int cnss2_sdio_thermal_cdev_register(struct device *dev,
+					unsigned long max_state, int mon_id);
+#else
+static inline int cnss_sdio_wlan_register_driver(void *driver_ops)
+{
+	return 0;
+}
+
+static inline void cnss_sdio_wlan_unregister_driver(void *driver_ops)
+{
+}
+
+static inline void *cnss_sdio_wlan_get_sdio_al_client_handle(void *func)
+{
+	return NULL;
+}
+
+static inline void *cnss_sdio_wlan_register_sdio_al_channel(void *channel_data)
+{
+	return NULL;
+}
+
+static inline void cnss_sdio_wlan_unregister_sdio_al_channel(void *ch_handle)
+{
+}
+
+static inline int cnss_sdio_wlan_time_sync(void)
+{
+	return 0;
+}
+
+static inline void cnss_fw_ready_ind_event(struct device *dev)
+{
+}
+
+static inline u64 cnss_get_tsf_irq_ts(struct device *dev)
+{
+	return 0;
+}
+
+static inline int cnss_sdio_get_soc_info(struct cnss_soc_info *soc_info)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline int cnss2_sdio_force_fw_assert(struct device *dev)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline int cnss_wlan_gpio_register(void)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline int cnss_wlan_gpio_deregister(void)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline int cnss2_sdio_thermal_cdev_register(struct device *dev,
+					unsigned long max_state, int mon_id)
+{
+	return -EOPNOTSUPP;
+}
+#endif /* CONFIG_SDIO_QCN */
 
 #endif /* _NET_CNSS2_H */

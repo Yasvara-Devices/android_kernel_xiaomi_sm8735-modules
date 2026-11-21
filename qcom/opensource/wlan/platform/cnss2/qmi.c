@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
+#include <linux/delay.h>
 #include <linux/module.h>
 #include <linux/soc/qcom/qmi.h>
 #include <linux/vmalloc.h>
@@ -60,6 +61,9 @@
 
 #define QMI_WLFW_MAC_READY_TIMEOUT_MS	50
 #define QMI_WLFW_MAC_READY_MAX_RETRY	200
+
+#define CNSS_BDF_SEG_RETRY_MAX		3
+#define CNSS_BDF_DNLD_FAIL_MAX		3
 
 // these error values are not defined in <linux/soc/qcom/qmi.h> and fw is sending as error response
 #define QMI_ERR_HARDWARE_RESTRICTED_V01		0x0053
@@ -330,16 +334,55 @@ static void cnss_update_build_info(struct wlfw_host_cap_req_msg_v01 *req)
 {}
 #endif
 
+static int cnss_add_ddr_range(struct wlfw_host_ddr_range_s_v01 *arr,
+			      u32 arr_size, int *count, u64 start, u64 size)
+{
+	u64 end = start + size;
+	u64 cur_start, cur_end, new_start, new_end;
+	int i;
+
+	for (i = 0; i < *count; i++) {
+		cur_start = arr[i].start;
+		cur_end = arr[i].start + arr[i].size;
+
+		if (end >= cur_start && start <= cur_end) {
+			new_start = min(cur_start, start);
+			new_end = max(cur_end, end);
+			if (new_start == cur_start && new_end == cur_end)
+				return 0;
+
+			arr[i].start = new_start;
+			arr[i].size = new_end - new_start;
+			cnss_pr_dbg("Update ddr range[%d]: start 0x%llx, size 0x%llx\n",
+				    i, arr[i].start, arr[i].size);
+			return 0;
+		}
+	}
+
+	if (*count >= arr_size) {
+		cnss_pr_dbg("No space for new item: cur %d, size %u\n",
+			    *count, arr_size);
+		return -ERANGE;
+	}
+
+	arr[*count].start = start;
+	arr[*count].size = size;
+	cnss_pr_dbg("Add ddr range[%d]: start 0x%llx, size 0x%llx\n",
+		    *count, start, size);
+	(*count)++;
+	return 0;
+}
+
 static int cnss_wlfw_host_cap_send_sync(struct cnss_plat_data *plat_priv)
 {
 	struct wlfw_host_cap_req_msg_v01 *req;
 	struct wlfw_host_cap_resp_msg_v01 *resp;
 	struct qmi_txn txn;
-	int ret = 0;
+	int ret = 0, i = 0;
 	u64 iova_start = 0, iova_size = 0,
 	    iova_ipa_start = 0, iova_ipa_size = 0;
-	u64 feature_list = 0;
-	u32 cx_mode_dt;
+	u64 feature_list = 0, msi_addr, msi_size;
+	u32 msi_addr_low = 0, msi_addr_high = 0;
 
 	cnss_pr_dbg("Sending host capability message, state: 0x%lx\n",
 		    plat_priv->driver_state);
@@ -397,11 +440,23 @@ static int cnss_wlfw_host_cap_send_sync(struct cnss_plat_data *plat_priv)
 	    !cnss_bus_get_iova(plat_priv, &iova_start, &iova_size) &&
 	    !cnss_bus_get_iova_ipa(plat_priv, &iova_ipa_start,
 				   &iova_ipa_size)) {
+		iova_size += iova_ipa_size;
 		req->ddr_range_valid = 1;
-		req->ddr_range[0].start = iova_start;
-		req->ddr_range[0].size = iova_size + iova_ipa_size;
-		cnss_pr_dbg("Sending iova starting 0x%llx with size 0x%llx\n",
-			    req->ddr_range[0].start, req->ddr_range[0].size);
+		ret = cnss_add_ddr_range(req->ddr_range,
+					 QMI_WLFW_MAX_HOST_DDR_RANGE_SIZE_V01,
+					 &i, iova_start, iova_size);
+
+		if (!ret &&
+		    !cnss_bus_get_msi_address(plat_priv,
+					      &msi_addr_low, &msi_addr_high)) {
+			/* FW requires 4KB alignment (mask lower 12 bits) */
+			msi_addr = ((u64)msi_addr_high << 32 |
+				    (msi_addr_low & 0xFFFFF000));
+			msi_size = 0x1000;
+			cnss_add_ddr_range(req->ddr_range,
+					   QMI_WLFW_MAX_HOST_DDR_RANGE_SIZE_V01,
+					   &i, msi_addr, msi_size);
+		}
 	}
 
 	req->host_build_type_valid = 1;
@@ -409,6 +464,7 @@ static int cnss_wlfw_host_cap_send_sync(struct cnss_plat_data *plat_priv)
 
 	cnss_wlfw_host_cap_parse_mlo(plat_priv, req);
 
+	cnss_get_caldb_rddm_reuse_info(plat_priv);
 	ret = cnss_get_feature_list(plat_priv, &feature_list);
 	if (!ret) {
 		req->feature_list_valid = 1;
@@ -423,23 +479,39 @@ static int cnss_wlfw_host_cap_send_sync(struct cnss_plat_data *plat_priv)
 		cnss_update_build_info(req);
 	}
 
-	if (plat_priv->device_id == FIG_DEVICE_ID ||
-	    of_property_read_bool(plat_priv->plat_dev->dev.of_node,
-				  "fig-direct-cx")) {
-		ret = of_property_read_u32(plat_priv->plat_dev->dev.of_node,
-					   "cx-mode", &cx_mode_dt);
-		if (ret) {
-			cnss_pr_err("could not get cx mode\n");
-			goto out;
+	if (plat_priv->device_id == FIG_DEVICE_ID) {
+		req->target_attachment_valid = 1;
+
+		/* CX_DATA_PIN_PDC intentionally uses WLFW_PMIC_V01 to disable
+		 * bi-directional ACK until fully validated.
+		 */
+		switch (plat_priv->cx_mode) {
+		case CX_DATA_PIN_PMIC:
+			fallthrough;
+		case CX_DATA_PIN_PDC:
+			req->target_attachment = WLFW_PMIC_V01;
+			break;
+		default:
+			req->target_attachment = WLFW_THIRD_PARTY_V01;
+			break;
 		}
 
-		req->target_attachment_valid = 1;
-		if (cx_mode_dt == CX_DATA_PIN_PMIC)
-			req->target_attachment = WLFW_PMIC_V01;
-		else if (cx_mode_dt == CX_DATA_PIN_PDC)
-			req->target_attachment = WLFW_PDC_V01;
-		else
-			req->target_attachment = WLFW_THIRD_PARTY_V01;
+		cnss_pr_info("Sending target attachment info: %d",
+			     req->target_attachment);
+		if (req->target_attachment) {
+			plat_priv->direct_cx_data_pin_mode =
+						req->target_attachment;
+
+			cnss_pr_info("Host cap request direct cx data pin mode: %d\n",
+				     plat_priv->direct_cx_data_pin_mode);
+			if (plat_priv->direct_cx_data_pin_mode) {
+				ret = cnss_set_cx_mode(plat_priv, CX_DATA_PIN);
+				if (ret < 0) {
+					cnss_pr_err("Failed to set to Data Pin Mode\n");
+					CNSS_ASSERT(0);
+				}
+			}
+		}
 	}
 
 	ret = qmi_txn_init(&plat_priv->qmi_wlfw, &txn,
@@ -661,17 +733,17 @@ int cnss_wlfw_tgt_cap_send_sync(struct cnss_plat_data *plat_priv)
 			QMI_WLFW_MAX_BUILD_ID_LEN + 1);
 	}
 
-	cnss_pr_info("direct cx data pin mode: %d\n",
-		     resp->direct_cx_data_pin_mode_valid);
-	if (resp->direct_cx_data_pin_mode_valid) {
-		plat_priv->direct_cx_data_pin_mode =
-			resp->direct_cx_data_pin_mode;
-	}
+	cnss_pr_info("tgt cap response direct cx data pin mode status: %d\n",
+		     resp->direct_cx_data_pin_mode);
 
-	if (plat_priv->direct_cx_data_pin_mode) {
-		ret = cnss_set_cx_mode(plat_priv, CX_DATA_PIN);
-		if (ret < 0)
-			cnss_pr_err("Failed to set to Data Pin Mode\n");
+	if (plat_priv->direct_cx_data_pin_mode !=
+	    resp->direct_cx_data_pin_mode) {
+		cnss_pr_err("Host and FW data pin mode status out of sync\n");
+		cnss_pr_err("Host data pin mode: %d\n",
+			    plat_priv->direct_cx_data_pin_mode);
+		cnss_pr_err("FW data pin mode: %d\n",
+			    resp->direct_cx_data_pin_mode);
+		CNSS_ASSERT(0);
 	}
 
 	/* FW will send aop retention volatage for qca6490 */
@@ -730,9 +802,7 @@ int cnss_wlfw_tgt_cap_send_sync(struct cnss_plat_data *plat_priv)
 	if (resp->hwid_bitmap_valid)
 		plat_priv->hwid_bitmap = resp->hwid_bitmap;
 
-	if (plat_priv->device_id == FIG_DEVICE_ID ||
-	    of_property_read_bool(plat_priv->plat_dev->dev.of_node,
-				  "fig-direct-cx")) {
+	if (plat_priv->device_id == FIG_DEVICE_ID) {
 		cnss_pr_info("ol_cpr_cfg_ext is: %d\n",
 			     resp->ol_cpr_cfg_ext_valid);
 		if (plat_priv->direct_cx_data_pin_mode &&
@@ -818,8 +888,13 @@ static int cnss_get_bdf_file_name(struct cnss_plat_data *plat_priv,
 
 	switch (bdf_type) {
 	case CNSS_BDF_ELF:
+		if (plat_priv->bdfname_dt[0] != 0) {
+			snprintf(filename_tmp, filename_len, "%s",
+				 plat_priv->bdfname_dt);
+			cnss_pr_dbg("filename_tmp:%s len:%d\n",
+				    filename_tmp, filename_len);
 		/* Board ID will be equal or less than 0xFF in GF mask case */
-		if (plat_priv->board_info.board_id == 0xFF) {
+		} else if (plat_priv->board_info.board_id == 0xFF) {
 			if (plat_priv->chip_info.chip_id & CHIP_ID_GF_MASK)
 				snprintf(filename_tmp, filename_len,
 					 ELF_BDF_FILE_NAME_GF);
@@ -885,6 +960,82 @@ static int cnss_get_bdf_file_name(struct cnss_plat_data *plat_priv,
 	return ret;
 }
 
+#ifdef CONFIG_CNSS2_BDF_RETRY
+/*
+ * Wait for DMS/IMS reconnect as a proxy for modem SSR completion.
+ * Polls up to 10s, then proceeds regardless.
+ */
+static void cnss_wait_for_modem_ssr_proxy(struct cnss_plat_data *plat_priv)
+{
+	int wait_count = 0;
+
+	while ((!test_bit(CNSS_QMI_DMS_CONNECTED, &plat_priv->driver_state) ||
+		!test_bit(CNSS_IMS_CONNECTED, &plat_priv->driver_state)) &&
+	       wait_count < 10) {
+		wait_count++;
+		cnss_pr_err("QMI dnld retry: waiting for DMS/IMS reconnect (state: 0x%lx), attempt %d/10\n",
+			    plat_priv->driver_state, wait_count);
+		msleep(1000);
+	}
+	if (wait_count) {
+		if (!test_bit(CNSS_QMI_DMS_CONNECTED, &plat_priv->driver_state) ||
+		    !test_bit(CNSS_IMS_CONNECTED, &plat_priv->driver_state))
+			cnss_pr_err("QMI dnld retry: DMS/IMS did not reconnect after %ds (state: 0x%lx), proceeding\n",
+				    wait_count, plat_priv->driver_state);
+		else
+			cnss_pr_dbg("QMI dnld retry: DMS and IMS reconnected after %ds (state: 0x%lx)\n",
+				    wait_count, plat_priv->driver_state);
+	}
+}
+
+/*
+ * Handle a failed BDF download: PCIe bus down + power up to recover, or assert
+ * after CNSS_BDF_DNLD_FAIL_MAX consecutive failures.
+ */
+static int cnss_bdf_dnld_handle_failure(struct cnss_plat_data *plat_priv,
+					int ret)
+{
+	plat_priv->bdf_dnld_fail_count++;
+
+	if (plat_priv->bdf_dnld_fail_count > CNSS_BDF_DNLD_FAIL_MAX) {
+		cnss_pr_err("BDF download failed %d times (last err: %d), asserting\n",
+			    plat_priv->bdf_dnld_fail_count, ret);
+		CNSS_QMI_ASSERT();
+		return -EIO;
+	}
+
+	if (test_bit(CNSS_DRIVER_UNLOADING, &plat_priv->driver_state) ||
+	    test_bit(CNSS_DRIVER_IDLE_SHUTDOWN, &plat_priv->driver_state)) {
+		cnss_pr_dbg("Unload/idle shutdown in progress, skip BDF reset\n");
+		return -EIO;
+	}
+
+	/* Isolated PCIe reset (no subsystem restart / SoC reboot). */
+	cnss_pr_err("BDF download failed (%d/%d, last err: %d), triggering PCIe bus down and power up\n",
+		    plat_priv->bdf_dnld_fail_count, CNSS_BDF_DNLD_FAIL_MAX, ret);
+	cnss_bus_dev_shutdown(plat_priv);
+	msleep(POWER_RESET_MIN_DELAY_MS);
+	if (cnss_bus_dev_powerup(plat_priv))
+		cnss_pr_err("Failed to power up device after BDF failure\n");
+
+	/*
+	 * -EHOSTDOWN tells the caller a reset was scheduled (async re-drive
+	 * incoming); not otherwise produced by this function.
+	 */
+	return -EHOSTDOWN;
+}
+#else
+static inline void cnss_wait_for_modem_ssr_proxy(struct cnss_plat_data *plat_priv)
+{
+}
+
+static inline int cnss_bdf_dnld_handle_failure(struct cnss_plat_data *plat_priv,
+					       int ret)
+{
+	return -EIO;
+}
+#endif /* CONFIG_CNSS2_BDF_RETRY */
+
 int cnss_wlfw_bdf_dnld_send_sync(struct cnss_plat_data *plat_priv,
 				 u32 bdf_type)
 {
@@ -896,17 +1047,19 @@ int cnss_wlfw_bdf_dnld_send_sync(struct cnss_plat_data *plat_priv,
 	const u8 *temp;
 	unsigned int remaining;
 	int ret = 0;
+	int xo_ret = 0;
+	int seg_retry = 0;
 
 	cnss_pr_dbg("Sending QMI_WLFW_BDF_DOWNLOAD_REQ_V01 message for bdf_type: %d (%s), state: 0x%lx\n",
 		    bdf_type, cnss_bdf_type_to_str(bdf_type), plat_priv->driver_state);
 
-	req = kzalloc(sizeof(*req), GFP_KERNEL);
+	req = vzalloc(sizeof(*req));
 	if (!req)
 		return -ENOMEM;
 
 	resp = kzalloc(sizeof(*resp), GFP_KERNEL);
 	if (!resp) {
-		kfree(req);
+		vfree(req);
 		return -ENOMEM;
 	}
 
@@ -956,6 +1109,7 @@ int cnss_wlfw_bdf_dnld_send_sync(struct cnss_plat_data *plat_priv,
 
 		memcpy(req->data, temp, req->data_len);
 
+bdf_seg_send:
 		ret = qmi_txn_init(&plat_priv->qmi_wlfw, &txn,
 				   wlfw_bdf_download_resp_msg_v01_ei, resp);
 		if (ret < 0) {
@@ -980,7 +1134,9 @@ int cnss_wlfw_bdf_dnld_send_sync(struct cnss_plat_data *plat_priv,
 		if (ret < 0) {
 			cnss_pr_err("Timeout while waiting for FW response for QMI_WLFW_BDF_DOWNLOAD_REQ_V01 request for %s, err: %d\n",
 				    cnss_bdf_type_to_str(bdf_type), ret);
-			goto err_send;
+			/* Timeout leaves the txn live; cancel before any retry. */
+			qmi_txn_cancel(&txn);
+			goto err_bdf_retry;
 		}
 
 		if (resp->resp.result != QMI_RESULT_SUCCESS_V01) {
@@ -988,39 +1144,93 @@ int cnss_wlfw_bdf_dnld_send_sync(struct cnss_plat_data *plat_priv,
 				    cnss_bdf_type_to_str(bdf_type), resp->resp.result,
 				    resp->resp.error);
 			ret = -resp->resp.result;
-			goto err_send;
+			goto err_bdf_retry;
 		}
 
+		seg_retry = 0;
 		remaining -= req->data_len;
 		temp += req->data_len;
 		req->seg_id++;
+		continue;
+
+err_bdf_retry:
+		/* Retry the same segment up to CNSS_BDF_SEG_RETRY_MAX times. */
+		if (IS_ENABLED(CONFIG_CNSS2_BDF_RETRY) &&
+		    seg_retry < CNSS_BDF_SEG_RETRY_MAX) {
+			seg_retry++;
+			cnss_pr_err("BDF seg %d failed, retry %d/%d\n",
+				    req->seg_id, seg_retry,
+				    CNSS_BDF_SEG_RETRY_MAX);
+			cnss_wait_for_modem_ssr_proxy(plat_priv);
+			memset(resp, 0, sizeof(*resp));
+			goto bdf_seg_send;
+		}
+		goto err_send;
 	}
 
 	release_firmware(fw_entry);
 
 	if (resp->host_bdf_data_valid) {
+		if (resp->host_bdf_data & QMI_WLFW_RADIO_OFF_V01) {
+			set_bit(CNSS_RADIO_OFF, &plat_priv->driver_state);
+		}
+
 		/* QCA6490 enable S3E regulator for IPA configuration only */
 		if (!(resp->host_bdf_data & QMI_WLFW_HW_XPA_V01))
 			cnss_enable_int_pow_amp_vreg(plat_priv);
 
 		plat_priv->cbc_file_download =
 			resp->host_bdf_data & QMI_WLFW_CBC_FILE_DOWNLOAD_V01;
-		cnss_pr_info("Host BDF config: HW_XPA: %d CalDB: %d\n",
+		cnss_pr_info("Host BDF config: HW_XPA: %d CalDB: %d Radio OFF: %d\n",
 			     resp->host_bdf_data & QMI_WLFW_HW_XPA_V01,
-			     plat_priv->cbc_file_download);
+			     plat_priv->cbc_file_download,
+			     resp->host_bdf_data & QMI_WLFW_RADIO_OFF_V01);
 	}
-	kfree(req);
+
+	/* XO trim value handling */
+	if (resp->xo_trim_val_valid) {
+		plat_priv->xo_trim_conf.trim_val = resp->xo_trim_val;
+
+		ret = cnss_xo_trim_perform(&plat_priv->xo_trim_conf);
+		cnss_pr_dbg("XO‑trim: received %u, result %d (final %u)\n",
+			    resp->xo_trim_val, ret,
+				plat_priv->xo_trim_conf.trim_val);
+
+		xo_ret = cnss_wlfw_xo_trim_result_send_sync(plat_priv, ret);
+		if (xo_ret)
+			cnss_pr_err("XO‑trim result notify failed: %d\n",
+				xo_ret);
+	}
+
+	vfree(req);
 	kfree(resp);
 	return 0;
 
 err_send:
 	release_firmware(fw_entry);
 err_req_fw:
+	/* IN_REBOOT and -EAGAIN are benign; REGDB is always non-fatal. */
 	if (!(bdf_type == CNSS_BDF_REGDB ||
 	      test_bit(CNSS_IN_REBOOT, &plat_priv->driver_state) ||
-	      ret == -EAGAIN))
-		CNSS_QMI_ASSERT();
-	kfree(req);
+	      ret == -EAGAIN)) {
+		if (IS_ENABLED(CONFIG_CNSS2_BDF_RETRY)) {
+			/*
+			 * A missing/unloadable HDS file (fw_entry never
+			 * assigned) is benign, same as REGDB above: HDS is
+			 * optional, so don't reset/assert over it.
+			 */
+			if (bdf_type == CNSS_BDF_HDS && !fw_entry) {
+				cnss_pr_dbg("HDS file not available, ignoring\n");
+			} else {
+				cnss_pr_err("BDF dnld failed, invoking retry/reset handler (type %d, err: %d)\n",
+					    bdf_type, ret);
+				ret = cnss_bdf_dnld_handle_failure(plat_priv, ret);
+			}
+		} else {
+			CNSS_QMI_ASSERT();
+		}
+	}
+	vfree(req);
 	kfree(resp);
 	return ret;
 }
@@ -1218,10 +1428,7 @@ int cnss_wlfw_tme_opt_file_dnld_send_sync(struct cnss_plat_data *plat_priv,
 
 	if (file == WLFW_TME_LITE_OEM_FUSE_FILE_V01) {
 		tme_opt_file_mem = &plat_priv->tme_opt_file_mem[0];
-		if (plat_priv->device_id == COLOGNE_DEVICE_ID)
-			file_name = CGN_TME_OEM_FUSE_FILE_NAME;
-		else
-			file_name = TME_OEM_FUSE_FILE_NAME;
+		file_name = TME_OEM_FUSE_FILE_NAME;
 	} else if (file == WLFW_TME_LITE_RPR_FILE_V01) {
 		tme_opt_file_mem = &plat_priv->tme_opt_file_mem[1];
 		file_name = TME_RPR_FILE_NAME;
@@ -1521,7 +1728,7 @@ int cnss_wlfw_qdss_data_send_sync(struct cnss_plat_data *plat_priv, char *file_n
 		return -ENOMEM;
 	}
 
-	resp = kzalloc(sizeof(*resp), GFP_KERNEL);
+	resp = vzalloc(sizeof(*resp));
 	if (!resp) {
 		cnss_pr_err("%s: failed to allocate resp mem: %zu\n",
 			    __func__, sizeof(*resp));
@@ -1635,7 +1842,7 @@ fail:
 
 end:
 	kfree(req);
-	kfree(resp);
+	vfree(resp);
 	return ret;
 }
 
@@ -1673,13 +1880,13 @@ int cnss_wlfw_qdss_dnld_send_sync(struct cnss_plat_data *plat_priv)
 	cnss_pr_dbg("Sending QDSS config download message, state: 0x%lx\n",
 		    plat_priv->driver_state);
 
-	req = kzalloc(sizeof(*req), GFP_KERNEL);
+	req = vzalloc(sizeof(*req));
 	if (!req)
 		return -ENOMEM;
 
 	resp = kzalloc(sizeof(*resp), GFP_KERNEL);
 	if (!resp) {
-		kfree(req);
+		vfree(req);
 		return -ENOMEM;
 	}
 
@@ -1771,7 +1978,7 @@ int cnss_wlfw_qdss_dnld_send_sync(struct cnss_plat_data *plat_priv)
 	}
 
 	release_firmware(fw_entry);
-	kfree(req);
+	vfree(req);
 	kfree(resp);
 	return 0;
 
@@ -1779,7 +1986,7 @@ err_send:
 	release_firmware(fw_entry);
 err_req_fw:
 
-	kfree(req);
+	vfree(req);
 	kfree(resp);
 	return ret;
 }
@@ -1995,6 +2202,15 @@ int cnss_wlfw_wlan_mode_send_sync(struct cnss_plat_data *plat_priv,
 	req->hw_debug_valid = 1;
 	req->hw_debug = 0;
 
+	if (mode == CNSS_MISSION) {
+		req->wlan_on_time_usec_valid = 1;
+		req->wlan_on_time_usec = plat_priv->wlan_on_time_usec;
+		req->wlan_off_time_usec_valid = 1;
+		req->wlan_off_time_usec = plat_priv->wlan_off_time_usec;
+		cnss_pr_dbg("Populated wlan_on_time_usec: %llu, wlan_off_time_usec: %llu\n",
+			    req->wlan_on_time_usec, req->wlan_off_time_usec);
+	}
+
 	ret = qmi_txn_init(&plat_priv->qmi_wlfw, &txn,
 			   wlfw_wlan_mode_resp_msg_v01_ei, resp);
 	if (ret < 0) {
@@ -2175,6 +2391,15 @@ int cnss_wlfw_wlan_cfg_send_sync(struct cnss_plat_data *plat_priv,
 		}
 	}
 
+	if (plat_priv->host_param && plat_priv->host_param->chip_name) {
+		req->chip_name_valid = 1;
+		strscpy(req->chip_name, plat_priv->host_param->chip_name,
+			QMI_WLFW_MAX_STR_LEN_V01 + 1);
+
+		cnss_pr_dbg("chip_name: %s, chip_valid: %d, host_chip_name: %s\n",
+			    req->chip_name, req->chip_name_valid, plat_priv->host_param->chip_name);
+	}
+
 	ret = qmi_txn_init(&plat_priv->qmi_wlfw, &txn,
 			   wlfw_wlan_cfg_resp_msg_v01_ei, resp);
 	if (ret < 0) {
@@ -2244,7 +2469,7 @@ int cnss_wlfw_athdiag_read_send_sync(struct cnss_plat_data *plat_priv,
 	if (!req)
 		return -ENOMEM;
 
-	resp = kzalloc(sizeof(*resp), GFP_KERNEL);
+	resp = vzalloc(sizeof(*resp));
 	if (!resp) {
 		kfree(req);
 		return -ENOMEM;
@@ -2297,12 +2522,12 @@ int cnss_wlfw_athdiag_read_send_sync(struct cnss_plat_data *plat_priv,
 	memcpy(data, resp->data, resp->data_len);
 
 	kfree(req);
-	kfree(resp);
+	vfree(resp);
 	return 0;
 
 out:
 	kfree(req);
-	kfree(resp);
+	vfree(resp);
 	return ret;
 }
 
@@ -2327,13 +2552,13 @@ int cnss_wlfw_athdiag_write_send_sync(struct cnss_plat_data *plat_priv,
 	cnss_pr_dbg("athdiag write: state 0x%lx, offset %x, mem_type %x, data_len %u, data %pK\n",
 		    plat_priv->driver_state, offset, mem_type, data_len, data);
 
-	req = kzalloc(sizeof(*req), GFP_KERNEL);
+	req = vzalloc(sizeof(*req));
 	if (!req)
 		return -ENOMEM;
 
 	resp = kzalloc(sizeof(*resp), GFP_KERNEL);
 	if (!resp) {
-		kfree(req);
+		vfree(req);
 		return -ENOMEM;
 	}
 
@@ -2375,12 +2600,12 @@ int cnss_wlfw_athdiag_write_send_sync(struct cnss_plat_data *plat_priv,
 		goto out;
 	}
 
-	kfree(req);
+	vfree(req);
 	kfree(resp);
 	return 0;
 
 out:
-	kfree(req);
+	vfree(req);
 	kfree(resp);
 	return ret;
 }
@@ -2972,13 +3197,13 @@ int cnss_wlfw_get_info_send_sync(struct cnss_plat_data *plat_priv, int type,
 	if (cmd_len > QMI_WLFW_MAX_DATA_SIZE_V01)
 		return -EINVAL;
 
-	req = kzalloc(sizeof(*req), GFP_KERNEL);
+	req = vzalloc(sizeof(*req));
 	if (!req)
 		return -ENOMEM;
 
 	resp = kzalloc(sizeof(*resp), GFP_KERNEL);
 	if (!resp) {
-		kfree(req);
+		vfree(req);
 		return -ENOMEM;
 	}
 
@@ -3005,26 +3230,14 @@ int cnss_wlfw_get_info_send_sync(struct cnss_plat_data *plat_priv, int type,
 		goto out;
 	}
 
-	ret = qmi_txn_wait(&txn, QMI_WLFW_TIMEOUT_JF);
-	if (ret < 0) {
-		cnss_pr_err("Failed to wait for response of get info request, err: %d\n",
-			    ret);
-		goto out;
-	}
+	qmi_txn_cancel(&txn);
 
-	if (resp->resp.result != QMI_RESULT_SUCCESS_V01) {
-		cnss_pr_err("Get info request failed, result: %d, err: %d\n",
-			    resp->resp.result, resp->resp.error);
-		ret = -resp->resp.result;
-		goto out;
-	}
-
-	kfree(req);
+	vfree(req);
 	kfree(resp);
 	return 0;
 
 out:
-	kfree(req);
+	vfree(req);
 	kfree(resp);
 	return ret;
 }
@@ -3315,6 +3528,12 @@ static void cnss_wlfw_fw_mem_file_save_ind_cb(struct qmi_handle *qmi_wlfw,
 		cnss_pr_err("Spurious indication\n");
 		return;
 	}
+
+	if (!test_bit(CNSS_DAEMON_CONNECTED, &plat_priv->driver_state)) {
+		cnss_pr_dbg("CNSS Daemon not connected, ignore qdss save indication\n");
+		return;
+	}
+
 	cnss_pr_dbg_buf("QMI fw_mem_file_save: source: %d  mem_seg: %d type: %u len: %u\n",
 			ind_msg->source, ind_msg->mem_seg_valid,
 			ind_msg->mem_seg[0].type, ind_msg->mem_seg_len);
@@ -3328,7 +3547,7 @@ static void cnss_wlfw_fw_mem_file_save_ind_cb(struct qmi_handle *qmi_wlfw,
 	event_data->total_size = ind_msg->total_size;
 
 	if (ind_msg->mem_seg_valid) {
-		if (ind_msg->mem_seg_len > QMI_WLFW_MAX_STR_LEN_V01) {
+		if (ind_msg->mem_seg_len > QMI_WLFW_MAX_NUM_MEM_SEG_V01) {
 			cnss_pr_err("Invalid seg len indication\n");
 			goto free_event_data;
 		}
@@ -3698,6 +3917,24 @@ static struct qmi_msg_handler qmi_wlfw_msg_handlers[] = {
 	{}
 };
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 19, 0))
+static int cnss_kernel_connect(struct socket *sock,
+			       struct sockaddr_qrtr *sq,
+			       int addrlen, int flags)
+{
+	return kernel_connect(sock, (struct sockaddr_unsized *)sq,
+			      addrlen, flags);
+}
+#else
+static int cnss_kernel_connect(struct socket *sock,
+			       struct sockaddr_qrtr *sq,
+			       int addrlen, int flags)
+{
+	return kernel_connect(sock, (struct sockaddr *)sq,
+			      addrlen, flags);
+}
+#endif
+
 static int cnss_wlfw_connect_to_server(struct cnss_plat_data *plat_priv,
 				       void *data)
 {
@@ -3713,8 +3950,7 @@ static int cnss_wlfw_connect_to_server(struct cnss_plat_data *plat_priv,
 	sq.sq_node = event_data->node;
 	sq.sq_port = event_data->port;
 
-	ret = kernel_connect(qmi_wlfw->sock, (struct sockaddr *)&sq,
-			     sizeof(sq), 0);
+	ret = cnss_kernel_connect(qmi_wlfw->sock, &sq, sizeof(sq), 0);
 	if (ret < 0) {
 		cnss_pr_err("Failed to connect to QMI WLFW remote service port\n");
 		goto out;
@@ -3747,14 +3983,6 @@ int cnss_wlfw_server_arrive(struct cnss_plat_data *plat_priv, void *data)
 		return -EINVAL;
 	}
 
-	if (!test_bit(CNSS_SOL_REGISTERED, &plat_priv->driver_state)) {
-		ret = cnss_init_sol_gpio(plat_priv);
-		if (ret)
-			cnss_pr_err("Unable to register sol GPIO %d\n", ret);
-		else
-			set_bit(CNSS_SOL_REGISTERED, &plat_priv->driver_state);
-	}
-
 	cnss_ignore_qmi_failure(false);
 
 	ret = cnss_wlfw_connect_to_server(plat_priv, data);
@@ -3782,7 +4010,8 @@ int cnss_wlfw_server_exit(struct cnss_plat_data *plat_priv)
 {
 	int ret;
 
-	if (!plat_priv)
+	if (!plat_priv ||
+	    !test_bit(CNSS_QMI_WLFW_CONNECTED, &plat_priv->driver_state))
 		return -ENODEV;
 
 	clear_bit(CNSS_QMI_WLFW_CONNECTED, &plat_priv->driver_state);
@@ -3950,6 +4179,7 @@ int cnss_qmi_get_dms_mac(struct cnss_plat_data *plat_priv)
 	    resp.mac_address_len != QMI_WLFW_MAC_ADDR_SIZE_V01) {
 		cnss_pr_err("Invalid MAC address received from DMS\n");
 		plat_priv->dms.mac_valid = false;
+		ret = -EINVAL;
 		goto out;
 	}
 	plat_priv->dms.mac_valid = true;
@@ -3972,8 +4202,7 @@ static int cnss_dms_connect_to_server(struct cnss_plat_data *plat_priv,
 	sq.sq_node = node;
 	sq.sq_port = port;
 
-	ret = kernel_connect(qmi_dms->sock, (struct sockaddr *)&sq,
-			     sizeof(sq), 0);
+	ret = cnss_kernel_connect(qmi_dms->sock, &sq, sizeof(sq), 0);
 	if (ret < 0) {
 		cnss_pr_err("Failed to connect to QMI DMS remote service Node: %d Port: %d\n",
 			    node, port);
@@ -4276,7 +4505,7 @@ static int coex_new_server(struct qmi_handle *qmi,
 	sq.sq_family = AF_QIPCRTR;
 	sq.sq_node = service->node;
 	sq.sq_port = service->port;
-	ret = kernel_connect(qmi->sock, (struct sockaddr *)&sq, sizeof(sq), 0);
+	ret = cnss_kernel_connect(qmi->sock, &sq, sizeof(sq), 0);
 	if (ret < 0) {
 		cnss_pr_err("Fail to connect to remote service port\n");
 		return ret;
@@ -4475,7 +4704,7 @@ static int ims_new_server(struct qmi_handle *qmi,
 	sq.sq_family = AF_QIPCRTR;
 	sq.sq_node = service->node;
 	sq.sq_port = service->port;
-	ret = kernel_connect(qmi->sock, (struct sockaddr *)&sq, sizeof(sq), 0);
+	ret = cnss_kernel_connect(qmi->sock, &sq, sizeof(sq), 0);
 	if (ret < 0) {
 		cnss_pr_err("Fail to connect to remote service port\n");
 		return ret;
