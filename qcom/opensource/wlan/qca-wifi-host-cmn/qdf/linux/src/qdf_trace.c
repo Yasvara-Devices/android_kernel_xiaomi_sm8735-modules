@@ -534,6 +534,27 @@ QDF_STATUS qdf_state_info_dump_all(char *buf, uint16_t size,
 qdf_export_symbol(qdf_state_info_dump_all);
 #endif
 
+#ifdef CONNECTIVITY_DIAG_EVENT
+enum diag_tx_status wlan_get_diag_tx_status(enum qdf_dp_tx_rx_status tx_status)
+{
+	switch (tx_status) {
+	case DIAG_TX_RX_STATUS_FW_DISCARD:
+	case DIAG_TX_RX_STATUS_INVALID:
+	case DIAG_TX_RX_STATUS_DROP:
+	case DIAG_TX_RX_STATUS_DOWNLOAD_SUCC:
+	case DIAG_TX_RX_STATUS_DEFAULT:
+	default:
+		return DIAG_TX_STATUS_FAIL;
+	case DIAG_TX_RX_STATUS_NO_ACK:
+		return DIAG_TX_STATUS_NO_ACK;
+	case DIAG_TX_RX_STATUS_OK:
+		return DIAG_TX_STATUS_ACK;
+	}
+
+	return DIAG_TX_STATUS_FAIL;
+}
+#endif
+
 #ifdef CONFIG_DP_TRACE
 
 #ifdef WLAN_LOGGING_BUFFERS_DYNAMICALLY
@@ -1639,25 +1660,6 @@ qdf_log_pkt_cstats(uint8_t *sa, uint8_t *da, enum qdf_proto_type pkt_type,
 #endif
 
 #ifdef CONNECTIVITY_DIAG_EVENT
-enum diag_tx_status wlan_get_diag_tx_status(enum qdf_dp_tx_rx_status tx_status)
-{
-	switch (tx_status) {
-	case DIAG_TX_RX_STATUS_FW_DISCARD:
-	case DIAG_TX_RX_STATUS_INVALID:
-	case DIAG_TX_RX_STATUS_DROP:
-	case DIAG_TX_RX_STATUS_DOWNLOAD_SUCC:
-	case DIAG_TX_RX_STATUS_DEFAULT:
-	default:
-		return DIAG_TX_STATUS_FAIL;
-	case DIAG_TX_RX_STATUS_NO_ACK:
-		return DIAG_TX_STATUS_NO_ACK;
-	case DIAG_TX_RX_STATUS_OK:
-		return DIAG_TX_STATUS_ACK;
-	}
-
-	return DIAG_TX_STATUS_FAIL;
-}
-
 /**
  * qdf_subtype_to_wlan_main_tag() - Convert qdf subtype to wlan main tag
  * @subtype: EAPoL key subtype

@@ -185,7 +185,12 @@
 #define WLAN_CFG_RX_PENDING_LO_THRESHOLD_MIN 100
 #define WLAN_CFG_RX_PENDING_LO_THRESHOLD_MAX 0x200000
 
-#define WLAN_CFG_INT_TIMER_THRESHOLD_WBM_RELEASE_RING 256
+/*
+ * Lower TX completion ring (WBM2SW_RELEASE) interrupt timer from 256 us to 64 us.
+ * Under CONFIG_WLAN_DP_PER_RING_TYPE_CONFIG=y, dp_int_timer_threshold_tx is ignored
+ * and wlan_srng_wbm_release_cfg uses this constant directly (wlan_cfg.c:3348).
+ */
+#define WLAN_CFG_INT_TIMER_THRESHOLD_WBM_RELEASE_RING 64
 #define WLAN_CFG_INT_TIMER_THRESHOLD_REO_RING 512
 #define WLAN_CFG_INT_BATCH_THRESHOLD_REO_RING 0
 

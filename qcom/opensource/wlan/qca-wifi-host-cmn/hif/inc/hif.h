@@ -583,6 +583,41 @@ enum hif_system_pm_state {
 	HIF_SYSTEM_PM_STATE_BUS_SUSPENDED,
 };
 
+#ifdef WLAN_FEATURE_AFFINITY_MGR
+/**
+ * struct hif_cpu_affinity - CPU affinity mask info for IRQ
+ *
+ * @current_irq_mask: Current CPU mask set for IRQ
+ * @wlan_requested_mask: CPU mask requested by WLAN
+ * @walt_taken_mask: Current CPU taken by Audio
+ * @last_updated: Last time IRQ CPU affinity was updated
+ * @last_affined_away: Last time when IRQ was affined away
+ * @update_requested: IRQ affinity hint set requested by WLAN
+ * @irq: IRQ number
+ */
+struct hif_cpu_affinity {
+	qdf_cpu_mask current_irq_mask;
+	qdf_cpu_mask wlan_requested_mask;
+	qdf_cpu_mask walt_taken_mask;
+	uint64_t last_updated;
+	uint64_t last_affined_away;
+	bool update_requested;
+	int irq;
+};
+#endif
+
+#if defined(HIF_CONFIG_SLUB_DEBUG_ON) || defined(HIF_CE_DEBUG_DATA_BUF)
+static inline uint64_t hif_get_log_timestamp(void)
+{
+	return qdf_get_log_timestamp();
+}
+#else
+static inline uint64_t hif_get_log_timestamp(void)
+{
+	return qdf_sched_clock();
+}
+#endif
+
 #ifdef WLAN_FEATURE_DP_EVENT_HISTORY
 #define HIF_NUM_INT_CONTEXTS		HIF_MAX_GROUP
 
@@ -591,23 +626,11 @@ enum hif_system_pm_state {
 #define HIF_EVENT_HIST_MAX		512
 
 #define HIF_EVENT_HIST_ENABLE_MASK	0xFF
-
-static inline uint64_t hif_get_log_timestamp(void)
-{
-	return qdf_get_log_timestamp();
-}
-
 #else
 
 #define HIF_EVENT_HIST_MAX		32
 /* Enable IRQ TRIGGER, NAPI SCHEDULE, SRNG ACCESS START */
 #define HIF_EVENT_HIST_ENABLE_MASK	0x19
-
-static inline uint64_t hif_get_log_timestamp(void)
-{
-	return qdf_sched_clock();
-}
-
 #endif
 
 /**
@@ -640,29 +663,6 @@ struct hif_event_misc {
 	int32_t last_irq_index;
 	uint64_t last_irq_ts;
 };
-
-#ifdef WLAN_FEATURE_AFFINITY_MGR
-/**
- * struct hif_cpu_affinity - CPU affinity mask info for IRQ
- *
- * @current_irq_mask: Current CPU mask set for IRQ
- * @wlan_requested_mask: CPU mask requested by WLAN
- * @walt_taken_mask: Current CPU taken by Audio
- * @last_updated: Last time IRQ CPU affinity was updated
- * @last_affined_away: Last time when IRQ was affined away
- * @update_requested: IRQ affinity hint set requested by WLAN
- * @irq: IRQ number
- */
-struct hif_cpu_affinity {
-	qdf_cpu_mask current_irq_mask;
-	qdf_cpu_mask wlan_requested_mask;
-	qdf_cpu_mask walt_taken_mask;
-	uint64_t last_updated;
-	uint64_t last_affined_away;
-	bool update_requested;
-	int irq;
-};
-#endif
 
 /**
  * struct hif_event_history - history for one interrupt group
