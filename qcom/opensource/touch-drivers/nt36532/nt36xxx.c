@@ -3092,7 +3092,9 @@ static void nvt_set_gesture_mode(int value)
 		 * still powered. FOD is the exception: its enable goes through a
 		 * different command that does work against a suspended IC.
 		 */
-		if ((value & GESTURE_CMD_FOD) !=
+		/* A parked IC is about to lose power; resume replays it. */
+		if (!ts->ic_deep_sleep &&
+		    (value & GESTURE_CMD_FOD) !=
 		    (ts->gesture_command & GESTURE_CMD_FOD)) {
 			mutex_lock(&ts->lock);
 			if (value & GESTURE_CMD_FOD) {
@@ -4718,6 +4720,8 @@ return:
 *******************************************************/
 static int32_t nvt_ts_suspend(struct device *dev)
 {
+	int gesture_command;
+
 	ts->nvt_tool_in_use = false;
 
 	if (!bTouchIsAwake) {
@@ -4735,9 +4739,14 @@ static int32_t nvt_ts_suspend(struct device *dev)
 	nvt_esd_check_enable(false);
 #endif /* #if NVT_TOUCH_ESD_PROTECT */
 
+	gesture_command = nvt_gesture_cmd(xiaomi_get_gesture_type(TOUCH_ID));
+	/* disable_irq() waits for the threaded handler, which takes ts->lock. */
+	if (!gesture_command)
+		nvt_irq_enable(false);
+
 	mutex_lock(&ts->lock);
 
-	ts->gesture_command = nvt_gesture_cmd(xiaomi_get_gesture_type(TOUCH_ID));
+	ts->gesture_command = gesture_command;
 
 	/*
 	 * Track what is armed right now, not a high-water mark. gesture_state
@@ -4751,7 +4760,17 @@ static int32_t nvt_ts_suspend(struct device *dev)
 	ts->gesture_state = !!ts->gesture_command;
 
 	dsi_panel_gesture_enable(ts->gesture_state);
-	nvt_enable_gesture_mode(true);
+	if (ts->gesture_command) {
+		nvt_enable_gesture_mode(true);
+	} else {
+		/*
+		 * Nothing to detect while dark: the panel drops every rail, so park
+		 * the IC instead of leaving it scanning for gestures until it browns
+		 * out, and keep its IRQ and SPI lines from riding an unpowered chip.
+		 */
+		nvt_enable_gesture_mode(false);
+		ts->ic_deep_sleep = true;
+	}
 
 	msleep(50);
 
@@ -4814,7 +4833,7 @@ static int32_t nvt_ts_resume(struct device *dev)
 	mutex_lock(&ts->lock);
 
 	/* SPI Pinctrl setup */
-	if (!ts->gesture_command) {
+	if (ts->ic_deep_sleep) {
 		if (ts->ts_pinctrl) {
 			ret = pinctrl_select_state(ts->ts_pinctrl,
 						   ts->pinctrl_state_active);
@@ -4850,8 +4869,9 @@ static int32_t nvt_ts_resume(struct device *dev)
 	}
 
 	/* gesture mode setup */
-	if (!ts->gesture_command) {
+	if (ts->ic_deep_sleep) {
 		nvt_irq_enable(true);
+		ts->ic_deep_sleep = false;
 	}
 	/* gesture mode setup end */
 
@@ -4995,9 +5015,9 @@ static int nvt_pm_suspend(struct device *dev)
 {
 	NVT_LOG("++\n");
 
-	if (device_may_wakeup(dev) && ts->gesture_command) {
+	if (device_may_wakeup(dev) && ts->gesture_command && !ts->ic_deep_sleep) {
 		NVT_LOG("enable touch irq wake\n");
-		enable_irq_wake(ts->client->irq);
+		ts->irq_wake_armed = !enable_irq_wake(ts->client->irq);
 	}
 	ts->dev_pm_suspend = true;
 	reinit_completion(&ts->dev_pm_suspend_completion);
@@ -5011,9 +5031,11 @@ static int nvt_pm_resume(struct device *dev)
 {
 	NVT_LOG("++\n");
 
-	if (device_may_wakeup(dev) && ts->gesture_command) {
+	/* gesture_command may have changed while asleep; undo what suspend did. */
+	if (ts->irq_wake_armed) {
 		NVT_LOG("disable touch irq wake\n");
 		disable_irq_wake(ts->client->irq);
+		ts->irq_wake_armed = false;
 	}
 	ts->dev_pm_suspend = false;
 	complete(&ts->dev_pm_suspend_completion);
