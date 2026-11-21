@@ -395,6 +395,16 @@ static int dsi_panel_set_pinctrl_state(struct dsi_panel *panel, bool enable)
 }
 
 
+#ifdef MI_DISPLAY_MODIFY
+/* Sampled once per power-off; power-on follows tddi_rails_kept instead. */
+static bool mi_tddi_keep_rails(struct dsi_panel *panel)
+{
+	return panel->mi_cfg.tddi_gesture_flag && !panel->mi_cfg.panel_dead_flag &&
+	       (mi_get_panel_id_by_dsi_panel(panel) == O10U_PANEL_PA ||
+		mi_get_panel_id_by_dsi_panel(panel) == O10U_PANEL_PB);
+}
+#endif
+
 static int dsi_panel_power_on(struct dsi_panel *panel)
 {
 	int rc = 0;
@@ -406,17 +416,21 @@ static int dsi_panel_power_on(struct dsi_panel *panel)
 
 #ifdef MI_DISPLAY_MODIFY
 	if (panel->mi_cfg.is_tddi_flag) {
-		if (!panel->mi_cfg.tddi_gesture_flag || panel->mi_cfg.panel_dead_flag) {
-			rc = dsi_pwr_enable_regulator(&panel->power_info, true);
-			if (panel->mi_cfg.panel_dead_flag) {
-				panel->mi_cfg.panel_dead_flag = false;
-			}
-		} else if (panel->mi_cfg.tddi_gesture_flag && 
-					(mi_get_panel_id_by_dsi_panel(panel) == O10U_PANEL_PA ||
-					 mi_get_panel_id_by_dsi_panel(panel) == O10U_PANEL_PB)) {
+		/*
+		 * Undo what power-off did, not what the gesture flag says now:
+		 * touch can flip the flag while the panel is dark (FOD arm, pocket
+		 * gate), and a partial enable after a full disable leaves vddio and
+		 * vddldo off - black panel, unpowered touch IC, no way to wake.
+		 */
+		if (panel->mi_cfg.tddi_rails_kept) {
 			DSI_INFO("mi_dsi_pwr_enable_vregs for TP gesture mode\n");
-			mi_dsi_pwr_enable_vregs(&panel->power_info, true, 2);
+			rc = mi_dsi_pwr_enable_vregs(&panel->power_info, true, 2);
+		} else {
+			rc = dsi_pwr_enable_regulator(&panel->power_info, true);
 		}
+		if (!rc)
+			panel->mi_cfg.tddi_rails_kept = false;
+		panel->mi_cfg.panel_dead_flag = false;
 	} else {
 #endif
 		rc = dsi_pwr_enable_regulator(&panel->power_info, true);
@@ -476,12 +490,15 @@ static int dsi_panel_power_off(struct dsi_panel *panel)
 		gpio_set_value(panel->reset_config.disp_en_gpio, 0);
 
 #ifdef MI_DISPLAY_MODIFY
+	if (panel->mi_cfg.is_tddi_flag)
+		panel->mi_cfg.tddi_rails_kept = mi_tddi_keep_rails(panel);
+
 	if (panel->mi_cfg.is_tddi_flag) {
-		if (!panel->mi_cfg.tddi_gesture_flag || panel->mi_cfg.panel_dead_flag) {
+		if (!panel->mi_cfg.tddi_rails_kept) {
 			if (gpio_is_valid(panel->reset_config.reset_gpio) &&
 						!panel->reset_gpio_always_on)
 				gpio_set_value(panel->reset_config.reset_gpio, 0);
-		} else if (panel->mi_cfg.tddi_gesture_flag) {
+		} else {
 			DSI_INFO("mi tddi tddi_gesture_flag power off dont need reset_gpio!!\n");
 		}
 	} else {
@@ -511,16 +528,13 @@ static int dsi_panel_power_off(struct dsi_panel *panel)
 
 #ifdef MI_DISPLAY_MODIFY
 	if (panel->mi_cfg.is_tddi_flag) {
-		if(!panel->mi_cfg.tddi_gesture_flag || panel->mi_cfg.panel_dead_flag) {
+		if (panel->mi_cfg.tddi_rails_kept) {
+			DSI_INFO("mi_dsi_pwr_enable_vregs for TP gesture mode\n");
+			mi_dsi_pwr_enable_vregs(&panel->power_info, false, 2);
+		} else {
 			rc = dsi_pwr_enable_regulator(&panel->power_info, false);
-			if (rc) {
-				DSI_ERR("[%s] failed to enable vregs, rc=%d\n", panel->name, rc);
-			}
-		} else if (panel->mi_cfg.tddi_gesture_flag && 
-					(mi_get_panel_id_by_dsi_panel(panel) == O10U_PANEL_PA ||
-					 mi_get_panel_id_by_dsi_panel(panel) == O10U_PANEL_PB)) {
-				DSI_INFO("mi_dsi_pwr_enable_vregs for TP gesture mode\n");
-				mi_dsi_pwr_enable_vregs(&panel->power_info, false, 2);
+			if (rc)
+				DSI_ERR("[%s] failed to disable vregs, rc=%d\n", panel->name, rc);
 		}
 	} else {
 #endif

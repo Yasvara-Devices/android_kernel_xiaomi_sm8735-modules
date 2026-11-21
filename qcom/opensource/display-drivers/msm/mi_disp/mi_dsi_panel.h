@@ -92,6 +92,8 @@ struct mi_dsi_panel_cfg {
 
 	bool is_tddi_flag;
 	bool tddi_gesture_flag;
+	/* Last power-off left the panel rails up for TP gestures. */
+	bool tddi_rails_kept;
 	bool panel_dead_flag;
 
 	/* xiaomi feature values */

@@ -5480,21 +5480,6 @@ static int dsi_display_dfps_update(struct dsi_display *display,
 	 */
 	panel_mode->dsi_mode_flags = 0;
 
-#ifdef MI_DISPLAY_MODIFY
-	/*
-	 * O10U: the DDIC gamma/overdrive bank (0x2F) follows refresh rate, but a
-	 * seamless DFPS switch otherwise never resends it -- the bank sticks at
-	 * whatever rate was active at panel enable, shifting colour at low grey
-	 * after any seamless rate transition. cur_mode is already updated above so
-	 * the switch picks the bank matching the new rate.
-	 */
-	if (mi_get_panel_id_by_dsi_panel(display->panel) == O10U_PANEL_PA ||
-		mi_get_panel_id_by_dsi_panel(display->panel) == O10U_PANEL_PB) {
-		mutex_lock(&display->panel->panel_lock);
-		dsi_panel_gamma_switch_locked(display->panel);
-		mutex_unlock(&display->panel->panel_lock);
-	}
-#endif
 error:
 	SDE_EVT32(SDE_EVTLOG_FUNC_EXIT);
 	return rc;
