@@ -1329,13 +1329,12 @@ fail:
 	return ret;
 }
 
-static int sde_cesta_remove(struct platform_device *pdev)
+static void sde_cesta_remove(struct platform_device *pdev)
 {
 	struct sde_cesta *cesta = platform_get_drvdata(pdev);
 
 	sde_cesta_deinit(pdev, cesta);
 
-	return 0;
 }
 
 static const struct of_device_id dt_match[] = {

@@ -4,6 +4,7 @@
  * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
+#include <linux/vmalloc.h>
 #include "msm_cvp.h"
 #include "cvp_hfi.h"
 #include "cvp_core_hfi.h"

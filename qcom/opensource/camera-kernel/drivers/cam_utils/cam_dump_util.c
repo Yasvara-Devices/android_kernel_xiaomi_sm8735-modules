@@ -156,7 +156,7 @@ int cam_debug_record_key_message(int subdev_id, void *ctrl, void *info,
 			cam_key_buffer->event_id[EVENT_ISP_SOF][index].opcode =
 				EVENT_ISP_SOF;
 			if (soc_info) {
-				strlcpy(cam_key_buffer
+				strscpy(cam_key_buffer
 						->event_id[EVENT_ISP_SOF][index]
 						.u.frame_info.dev_name,
 					soc_info->dev_name,
@@ -218,7 +218,7 @@ int cam_debug_record_key_message(int subdev_id, void *ctrl, void *info,
 					dev->dev_hdl);
 			soc_info = &s_ctrl->soc_info;
 			if (soc_info) {
-				strlcpy(cam_key_buffer
+				strscpy(cam_key_buffer
 						->event_id[EVENT_ISP_EOF][index]
 						.u.frame_info.dev_name,
 					soc_info->dev_name,
@@ -268,7 +268,7 @@ int cam_debug_record_key_message(int subdev_id, void *ctrl, void *info,
 					dev->dev_hdl);
 			soc_info = &s_ctrl->soc_info;
 			if (soc_info) {
-				strlcpy(cam_key_buffer
+				strscpy(cam_key_buffer
 						->event_id[EVENT_ISP_EPOCH]
 							  [index]
 						.u.frame_info.dev_name,

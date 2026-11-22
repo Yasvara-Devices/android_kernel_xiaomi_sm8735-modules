@@ -2870,7 +2870,7 @@ static int sipa_pinctrl_select(struct platform_device *pdev, sipa_dev_t *si_pa)
 			if (gpio_is_valid(si_pa->irq_pin)) {
 				ret = devm_gpio_request_one(&pdev->dev,
 							    si_pa->irq_pin,
-							    GPIOF_DIR_IN,
+							    GPIOF_IN,
 							    "SIA91XX_INT");
 				if (ret) {
 					pr_err("%s: fail to request irq gpio %d",
@@ -2986,7 +2986,7 @@ out0:
 	return ret;
 }
 
-static int sipa_remove(struct platform_device *pdev)
+static void sipa_remove(struct platform_device *pdev)
 {
 	int ret = 0;
 	sipa_dev_t *si_pa = NULL;
@@ -2994,14 +2994,14 @@ static int sipa_remove(struct platform_device *pdev)
 	if (NULL == pdev) {
 		pr_err("[  err][%s] %s: pdev is NULL !!! \n", LOG_FLAG,
 		       __func__);
-		return -ENODEV;
+		return;
 	}
 	pr_debug("[debug][%s] %s: remove \n", LOG_FLAG, __func__);
 
 	si_pa = (sipa_dev_t *)dev_get_drvdata(&pdev->dev);
 	if (NULL == si_pa) {
 		pr_err("[  err][%s] %s: si_pa is NULL \n", LOG_FLAG, __func__);
-		return 0;
+		return;
 	}
 
 	ret = sipa_suspend(si_pa);
@@ -3020,7 +3020,6 @@ static int sipa_remove(struct platform_device *pdev)
 
 	put_sipa_dev(si_pa);
 
-	return 0;
 }
 
 static void sipa_shutdown(struct platform_device *pdev)

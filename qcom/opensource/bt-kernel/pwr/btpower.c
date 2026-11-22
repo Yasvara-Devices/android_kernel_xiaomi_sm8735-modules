@@ -1927,7 +1927,7 @@ free_pdata:
 	return ret;
 }
 
-static int bt_power_remove(struct platform_device *pdev)
+static void bt_power_remove(struct platform_device *pdev)
 {
 	dev_dbg(&pdev->dev, "%s\n", __func__);
 	probe_finished = false;
@@ -1936,7 +1936,6 @@ static int bt_power_remove(struct platform_device *pdev)
 	if (pwr_data->is_ganges_dt)
 		destroy_workqueue(pwr_data->workq);
 	kfree(pwr_data);
-	return 0;
 }
 
 int btpower_register_slimdev(struct device *dev)

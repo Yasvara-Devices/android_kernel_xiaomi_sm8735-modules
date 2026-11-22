@@ -488,7 +488,9 @@ const struct file_operations disp_log_fops = {
 	.write = mi_disp_log_write,
 	.release = mi_disp_log_release,
 	.poll = mi_disp_log_poll,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0)
 	.llseek = no_llseek,
+#endif
 };
 
 static ssize_t info_show(struct device *device, struct device_attribute *attr,

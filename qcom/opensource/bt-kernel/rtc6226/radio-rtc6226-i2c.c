@@ -933,7 +933,7 @@ err_vreg:
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
 static void rtc6226_i2c_remove(struct i2c_client *client)
 #else
-static int rtc6226_i2c_remove(struct i2c_client *client)
+static void rtc6226_i2c_remove(struct i2c_client *client)
 #endif
 {
 	struct rtc6226_device *radio = i2c_get_clientdata(client);
@@ -948,7 +948,7 @@ static int rtc6226_i2c_remove(struct i2c_client *client)
 	kfree(radio);
 	FMDBG("%s exit\n", __func__);
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0))
-	return 0;
+	return;
 #endif
 }
 

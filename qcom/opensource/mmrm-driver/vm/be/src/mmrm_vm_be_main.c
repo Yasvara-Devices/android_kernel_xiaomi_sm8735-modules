@@ -66,14 +66,13 @@ clk_count_err:
 	return -EINVAL;
 }
 
-static int mmrm_vm_be_driver_remove(struct platform_device *pdev)
+static void mmrm_vm_be_driver_remove(struct platform_device *pdev)
 {
 	mmrm_vm_msgq_deinit(drv_vm_be);
 	msm_mmrm_debugfs_deinit(drv_vm_be->debugfs_root);
 
 	dev_set_drvdata(&pdev->dev, NULL);
 	drv_vm_be = (void *) -EPROBE_DEFER;
-	return 0;
 }
 
 static const struct of_device_id mmrm_vm_be_match[] = {

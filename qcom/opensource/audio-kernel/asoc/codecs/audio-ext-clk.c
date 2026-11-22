@@ -293,7 +293,7 @@ err:
 	return ret;
 }
 
-static int audio_ref_clk_remove(struct platform_device *pdev)
+static void audio_ref_clk_remove(struct platform_device *pdev)
 {
 	struct pinctrl_info *pnctrl_info = &audio_ap_clk2.pnctrl_info;
 
@@ -307,7 +307,6 @@ static int audio_ref_clk_remove(struct platform_device *pdev)
 		pnctrl_info->pinctrl = NULL;
 	}
 
-	return 0;
 }
 
 static const struct of_device_id audio_ref_clk_match[] = {

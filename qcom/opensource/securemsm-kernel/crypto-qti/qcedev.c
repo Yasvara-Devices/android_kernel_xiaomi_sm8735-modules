@@ -2739,14 +2739,14 @@ static int qcedev_probe(struct platform_device *pdev)
 	return -EINVAL;
 };
 
-static int qcedev_remove(struct platform_device *pdev)
+static void qcedev_remove(struct platform_device *pdev)
 {
 	struct qcedev_control *podev;
 	int ret = 0;
 
 	podev = platform_get_drvdata(pdev);
 	if (!podev)
-		return 0;
+		return;
 
 	qcedev_ce_high_bw_req(podev, true);
 	if (podev->qce) {
@@ -2770,7 +2770,6 @@ static int qcedev_remove(struct platform_device *pdev)
 	class_destroy(driver_class);
 
 	unregister_chrdev_region(qcedev_device_no, 1);
-	return 0;
 };
 
 static int qcedev_suspend(struct platform_device *pdev, pm_message_t state)

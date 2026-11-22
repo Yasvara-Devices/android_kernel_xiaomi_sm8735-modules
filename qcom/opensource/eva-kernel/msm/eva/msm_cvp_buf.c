@@ -74,7 +74,7 @@ int print_smem(u32 tag, const char *str, struct msm_cvp_inst *inst,
 	if (smem->dma_buf) {
 		i = get_pkt_index_from_type(smem->pkt_type);
 		if (i > 0)
-			strlcpy(name, cvp_hfi_defs[i].name, PKT_NAME_LEN);
+			strscpy(name, cvp_hfi_defs[i].name, PKT_NAME_LEN);
 
 		if (!atomic_read(&smem->refcount))
 			dprintk(tag,
@@ -248,6 +248,20 @@ static struct file *msm_cvp_fget(unsigned int fd, struct task_struct *task,
 		return NULL;
 
 	rcu_read_lock();
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
+	{
+		struct fdtable *fdt = rcu_dereference(files->fdt);
+
+		file = NULL;
+		if (fdt && fd < fdt->max_fds) {
+			file = get_file_rcu(&fdt->fd[fd]);
+			if (file && (file->f_mode & mask)) {
+				fput(file);
+				file = NULL;
+			}
+		}
+	}
+#else
 loop:
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 13, 0))
 	file = fcheck_files(files, fd);
@@ -264,6 +278,7 @@ loop:
 		else if (!get_file_rcu(file))
 			goto loop;
 	}
+#endif
 	rcu_read_unlock();
 
 	return file;

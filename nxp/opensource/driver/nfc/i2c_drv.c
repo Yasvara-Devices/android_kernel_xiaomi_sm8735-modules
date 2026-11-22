@@ -324,7 +324,9 @@ ssize_t nfc_i2c_dev_write(struct file *filp, const char __user *buf,
 
 static const struct file_operations nfc_i2c_dev_fops = {
 	.owner = THIS_MODULE,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0)
 	.llseek = no_llseek,
+#endif
 	.read = nfc_i2c_dev_read,
 	.write = nfc_i2c_dev_write,
 	.open = nfc_dev_open,

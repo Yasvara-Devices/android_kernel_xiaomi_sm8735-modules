@@ -11077,11 +11077,11 @@ static void tavil_add_child_devices(struct work_struct *work)
 
 		/* Parse other child device nodes and add platform device */
 		if (!strcmp(node->name, "swr_master"))
-			strlcpy(plat_dev_name, "tavil_swr_ctrl",
+			strscpy(plat_dev_name, "tavil_swr_ctrl",
 				(WCD934X_STRING_LEN - 1));
 		else if (strnstr(node->name, "msm_cdc_pinctrl",
 				 strlen("msm_cdc_pinctrl")) != NULL)
-			strlcpy(plat_dev_name, node->name,
+			strscpy(plat_dev_name, node->name,
 				(WCD934X_STRING_LEN - 1));
 		else
 			continue;
@@ -11438,14 +11438,14 @@ err_resmgr:
 	return ret;
 }
 
-static int tavil_remove(struct platform_device *pdev)
+static void tavil_remove(struct platform_device *pdev)
 {
 	struct tavil_priv *tavil;
 	int count = 0;
 
 	tavil = platform_get_drvdata(pdev);
 	if (!tavil)
-		return -EINVAL;
+		return;
 
 	/* do dsd deinit before codec->component->regmap becomes freed */
 	if (tavil->dsd_config) {
@@ -11475,7 +11475,6 @@ static int tavil_remove(struct platform_device *pdev)
 	clk_put(tavil->wcd_ext_clk);
 	wcd_resmgr_remove(tavil->resmgr);
 	devm_kfree(&pdev->dev, tavil);
-	return 0;
 }
 
 static struct platform_driver tavil_codec_driver = {

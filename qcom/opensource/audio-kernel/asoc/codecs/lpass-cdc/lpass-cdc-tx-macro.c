@@ -64,7 +64,7 @@ static const DECLARE_TLV_DB_SCALE(digital_gain, 0, 1, 0);
 static int lpass_cdc_tx_macro_hw_params(struct snd_pcm_substream *substream,
 			       struct snd_pcm_hw_params *params,
 			       struct snd_soc_dai *dai);
-static int lpass_cdc_tx_macro_get_channel_map(struct snd_soc_dai *dai,
+static int lpass_cdc_tx_macro_get_channel_map(const struct snd_soc_dai *dai,
 				unsigned int *tx_num, unsigned int *tx_slot,
 				unsigned int *rx_num, unsigned int *rx_slot);
 
@@ -1364,7 +1364,7 @@ static int lpass_cdc_tx_macro_hw_params(struct snd_pcm_substream *substream,
 	return 0;
 }
 
-static int lpass_cdc_tx_macro_get_channel_map(struct snd_soc_dai *dai,
+static int lpass_cdc_tx_macro_get_channel_map(const struct snd_soc_dai *dai,
 				unsigned int *tx_num, unsigned int *tx_slot,
 				unsigned int *rx_num, unsigned int *rx_slot)
 {
@@ -2371,7 +2371,7 @@ err_reg_macro:
 	return ret;
 }
 
-static int lpass_cdc_tx_macro_remove(struct platform_device *pdev)
+static void lpass_cdc_tx_macro_remove(struct platform_device *pdev)
 {
 	struct lpass_cdc_tx_macro_priv *tx_priv = NULL;
 	int dai_idx;
@@ -2379,7 +2379,7 @@ static int lpass_cdc_tx_macro_remove(struct platform_device *pdev)
 	tx_priv = platform_get_drvdata(pdev);
 
 	if (!tx_priv)
-		return -EINVAL;
+		return;
 
 	for (dai_idx = 0; dai_idx < LPASS_CDC_TX_MACRO_MAX_DAIS; ++dai_idx)
 		cancel_delayed_work_sync(
@@ -2389,7 +2389,6 @@ static int lpass_cdc_tx_macro_remove(struct platform_device *pdev)
 	mutex_destroy(&tx_priv->mclk_lock);
 	mutex_destroy(&tx_priv->wlock);
 	lpass_cdc_unregister_macro(&pdev->dev, TX_MACRO);
-	return 0;
 }
 
 

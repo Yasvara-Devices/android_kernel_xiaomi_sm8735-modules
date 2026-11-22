@@ -8,6 +8,7 @@
 #define _MSM_VIDC_INTERNAL_H_
 
 #include <linux/version.h>
+#include <linux/vmalloc.h>
 #include <linux/bits.h>
 #include <linux/workqueue.h>
 #include <linux/spinlock.h>

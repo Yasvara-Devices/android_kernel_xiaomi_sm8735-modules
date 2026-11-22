@@ -182,12 +182,11 @@ skip_mmrm:
 	return rc;
 }
 
-static int mmrm_vm_fe_driver_remove(struct platform_device *pdev)
+static void mmrm_vm_fe_driver_remove(struct platform_device *pdev)
 {
 	struct mmrm_vm_driver_data *mmrm_vm = dev_get_drvdata(&pdev->dev);
 
 	mmrm_vm_msgq_deinit(mmrm_vm);
-	return 0;
 }
 
 static const struct of_device_id mmrm_vm_fe_match[] = {

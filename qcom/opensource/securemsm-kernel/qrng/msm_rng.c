@@ -370,7 +370,7 @@ err_exit:
 	return error;
 }
 
-static int msm_rng_remove(struct platform_device *pdev)
+static void msm_rng_remove(struct platform_device *pdev)
 {
 	struct msm_rng_device *msm_rng_dev = platform_get_drvdata(pdev);
 
@@ -388,7 +388,6 @@ static int msm_rng_remove(struct platform_device *pdev)
 
 	kfree_sensitive(msm_rng_dev);
 	msm_rng_dev_cached = NULL;
-	return 0;
 }
 
 static int qrng_get_random(struct crypto_rng *tfm, const u8 *src,

@@ -978,13 +978,12 @@ static int msm_audio_ion_probe(struct platform_device *pdev)
 	return rc;
 }
 
-static int msm_audio_ion_remove(struct platform_device *pdev)
+static void msm_audio_ion_remove(struct platform_device *pdev)
 {
 	struct msm_audio_ion_private *ion_data = dev_get_drvdata(&pdev->dev);
 	ion_data->smmu_enabled = 0;
 	ion_data->device_status = 0;
 	msm_audio_ion_unreg_chrdev(ion_data);
-	return 0;
 }
 
 static struct platform_driver msm_audio_ion_driver = {

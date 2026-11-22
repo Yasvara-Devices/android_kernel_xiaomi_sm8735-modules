@@ -14496,11 +14496,11 @@ static void tasha_add_child_devices(struct work_struct *work)
 
 	for_each_child_of_node(wcd9xxx->dev->of_node, node) {
 		if (!strcmp(node->name, "swr_master"))
-			strlcpy(plat_dev_name, "tasha_swr_ctrl",
+			strscpy(plat_dev_name, "tasha_swr_ctrl",
 				(WCD9335_STRING_LEN - 1));
 		else if (strnstr(node->name, "msm_cdc_pinctrl",
 				 strlen("msm_cdc_pinctrl")) != NULL)
-			strlcpy(plat_dev_name, node->name,
+			strscpy(plat_dev_name, node->name,
 				(WCD9335_STRING_LEN - 1));
 		else
 			continue;
@@ -14765,7 +14765,7 @@ err_cdc_pwr:
 	return ret;
 }
 
-static int tasha_remove(struct platform_device *pdev)
+static void tasha_remove(struct platform_device *pdev)
 {
 	struct tasha_priv *tasha;
 	int count = 0;
@@ -14773,7 +14773,7 @@ static int tasha_remove(struct platform_device *pdev)
 	tasha = platform_get_drvdata(pdev);
 
 	if (!tasha)
-		return -EINVAL;
+		return;
 
 	snd_event_client_deregister(pdev->dev.parent);
 	for (count = 0; count < tasha->child_count &&
@@ -14788,7 +14788,6 @@ static int tasha_remove(struct platform_device *pdev)
 	mutex_destroy(&tasha->sb_clk_gear_lock);
 	snd_soc_unregister_component(&pdev->dev);
 	devm_kfree(&pdev->dev, tasha);
-	return 0;
 }
 
 static struct platform_driver tasha_codec_driver = {

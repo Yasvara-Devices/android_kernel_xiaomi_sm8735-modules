@@ -5,8 +5,9 @@
 
 #include <linux/kernel.h>
 #include <linux/init.h>
-#include <linux/usb/ucsi_glink.h>
+#include <linux/of.h>
 #include <linux/usb/typec.h>
+#include <linux/soc/qcom/fsa4480-i2c.h>
 #include <sound/jack.h>
 #include <sound/soc.h>
 #include "typec_analog_acc.h"
@@ -44,9 +45,10 @@ static int typec_analog_acc_event_changed(struct notifier_block *nb,
 	priv = container_of(nb, struct typec_analog_acc_priv, ucsi_nb);
 	if (!priv) {
 		pr_err("%s: priv is NULL\n", __func__);
+		return -EINVAL;
 	}
 
-	acc = ((struct ucsi_glink_constat_info *)ptr)->acc;
+	acc = (enum typec_accessory)event;
 
 	pr_info("%s: acc = %d", __func__, acc);
 
@@ -84,15 +86,23 @@ int typec_analog_acc_init(struct snd_soc_component *component)
 	acc_priv = kzalloc(sizeof(struct typec_analog_acc_priv), GFP_KERNEL);
 	if (!acc_priv) {
 		pr_err("%s: acc_priv is NULL\n", __func__);
+		return -ENOMEM;
 	}
 
 	acc_priv->ucsi_nb.notifier_call = typec_analog_acc_event_changed;
 	acc_priv->ucsi_nb.priority = 0;
-	ret = register_ucsi_glink_notifier(&acc_priv->ucsi_nb);
-	if (ret) {
-		pr_err("%s: ucsi glink notifier registration failed: %d\n",
-		       __func__, ret);
-		goto err;
+	{
+		struct device_node *fsa_np = of_parse_phandle(
+			component->dev->of_node, "qcom,usbc-analog-en", 0);
+		if (fsa_np) {
+			ret = fsa4480_reg_notifier(&acc_priv->ucsi_nb, fsa_np);
+			of_node_put(fsa_np);
+			if (ret) {
+				pr_err("%s: fsa4480 notifier registration failed: %d\n",
+				       __func__, ret);
+				goto err;
+			}
+		}
 	}
 
 	ret = snd_soc_card_jack_new(component->card, "Typec_analog Jack",

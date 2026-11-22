@@ -1196,16 +1196,15 @@ static int msm_lease_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int msm_lease_remove(struct platform_device *pdev)
+static void msm_lease_remove(struct platform_device *pdev)
 {
 	struct msm_lease *lease_drv;
 
 	lease_drv = platform_get_drvdata(pdev);
 	if (!lease_drv)
-		return 0;
+		return;
 	platform_set_drvdata(pdev, NULL);
 
-	return 0;
 }
 
 static const struct of_device_id dt_match[] = {

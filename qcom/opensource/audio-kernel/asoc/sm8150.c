@@ -7230,13 +7230,12 @@ err:
 	return ret;
 }
 
-static int msm_asoc_machine_remove(struct platform_device *pdev)
+static void msm_asoc_machine_remove(struct platform_device *pdev)
 {
 	audio_notifier_deregister("sm8150");
 	msm_i2s_auxpcm_deinit();
 
 	msm_release_pinctrl(pdev);
-	return 0;
 }
 
 static struct platform_driver sm8150_asoc_machine_driver = {

@@ -6116,7 +6116,7 @@ static void fastrpc_genpool_free(struct fastrpc_smmu *smmucb)
 	}
 }
 
-static int fastrpc_cb_remove(struct platform_device *pdev)
+static void fastrpc_cb_remove(struct platform_device *pdev)
 {
 	struct fastrpc_channel_ctx *cctx = dev_get_drvdata(pdev->dev.parent);
 	struct fastrpc_smmu *smmucb = dev_get_drvdata(&pdev->dev),
@@ -6147,7 +6147,6 @@ static int fastrpc_cb_remove(struct platform_device *pdev)
 	}
 	spin_unlock_irqrestore(&cctx->lock, flags);
 	dev_info(&pdev->dev, "Successfully removed %s", pdev->dev.kobj.name);
-	return 0;
 }
 
 static const struct of_device_id fastrpc_match_table[] = {

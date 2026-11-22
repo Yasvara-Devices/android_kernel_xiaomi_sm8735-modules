@@ -2601,7 +2601,7 @@ static char *fmt_single_name(struct device *dev, int *id)
 	if (dev_name(dev) == NULL)
 		return NULL;
 
-	strlcpy(name, dev_name(dev), NAME_SIZE);
+	strscpy(name, dev_name(dev), NAME_SIZE);
 
 	/* are we a "%s.%d" name (platform and SPI components) */
 	found = strstr(name, dev->driver->name);
@@ -2624,7 +2624,7 @@ static char *fmt_single_name(struct device *dev, int *id)
 
 			/* sanitize component name for DAI link creation */
 			snprintf(tmp, NAME_SIZE, "%s.%s", dev->driver->name, name);
-			strlcpy(name, tmp, NAME_SIZE);
+			strscpy(name, tmp, NAME_SIZE);
 		} else
 			*id = 0;
 	}
@@ -2903,7 +2903,7 @@ err:
 	return ret;
 }
 
-static int msm_asoc_machine_remove(struct platform_device *pdev)
+static void msm_asoc_machine_remove(struct platform_device *pdev)
 {
 	struct snd_soc_card *card = platform_get_drvdata(pdev);
 	struct msm_asoc_mach_data *pdata = NULL;
@@ -2919,7 +2919,6 @@ static int msm_asoc_machine_remove(struct platform_device *pdev)
 	snd_event_master_deregister(&pdev->dev);
 	snd_soc_unregister_card(card);
 
-	return 0;
 }
 
 static struct platform_driver sun_asoc_machine_driver = {

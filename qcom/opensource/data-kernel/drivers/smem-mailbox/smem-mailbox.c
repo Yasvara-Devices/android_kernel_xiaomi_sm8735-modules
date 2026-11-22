@@ -243,8 +243,7 @@ static int smem_probe(struct platform_device *pdev) {
 	return 0;
 }
 
-static int smem_remove(struct platform_device *pdev) {
-	return 0;
+static void smem_remove(struct platform_device *pdev) {
 }
 
 int smem_mailbox_start(int id, smem_mailbox_urgent_cb urgent_cb) {

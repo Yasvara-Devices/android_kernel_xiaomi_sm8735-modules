@@ -2791,12 +2791,11 @@ static int rouleur_probe(struct platform_device *pdev)
 					&rouleur_comp_ops, match);
 }
 
-static int rouleur_remove(struct platform_device *pdev)
+static void rouleur_remove(struct platform_device *pdev)
 {
 	component_master_del(&pdev->dev, &rouleur_comp_ops);
 	dev_set_drvdata(&pdev->dev, NULL);
 
-	return 0;
 }
 
 #ifdef CONFIG_PM_SLEEP

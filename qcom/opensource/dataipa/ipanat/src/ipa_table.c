@@ -89,7 +89,7 @@ void ipa_table_init(
 
 	memset(table, 0, sizeof(ipa_table));
 
-	strlcpy(table->name, table_name, IPA_RESOURCE_NAME_MAX);
+	strscpy(table->name, table_name, IPA_RESOURCE_NAME_MAX);
 
 	table->nmi             = nmi;
 	table->entry_size      = entry_size;

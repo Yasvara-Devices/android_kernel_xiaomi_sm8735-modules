@@ -9,6 +9,7 @@
 
 #include <dt-bindings/msm-camera.h>
 #include <linux/platform_device.h>
+#include <linux/vmalloc.h>
 #include "cam_presil_hw_access.h"
 #include "cam_trace.h"
 

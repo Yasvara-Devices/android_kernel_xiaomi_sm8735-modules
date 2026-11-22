@@ -256,7 +256,7 @@ error:
 	return rc;
 }
 
-static int dp_pll_driver_remove(struct platform_device *pdev)
+static void dp_pll_driver_remove(struct platform_device *pdev)
 {
 	struct dp_pll *pll = platform_get_drvdata(pdev);
 
@@ -266,7 +266,6 @@ static int dp_pll_driver_remove(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, NULL);
 
-	return 0;
 }
 
 static struct platform_driver dp_pll_platform_driver = {

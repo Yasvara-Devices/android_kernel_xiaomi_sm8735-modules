@@ -10077,13 +10077,12 @@ err:
 	return ret;
 }
 
-static int msm_asoc_machine_remove(struct platform_device *pdev)
+static void msm_asoc_machine_remove(struct platform_device *pdev)
 {
 	audio_notifier_deregister("qcs405");
 	msm_i2s_auxpcm_deinit();
 	msm_mdf_mem_deinit();
 
-	return 0;
 }
 
 static struct platform_driver qcs405_asoc_machine_driver = {

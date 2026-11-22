@@ -38,7 +38,7 @@
 static char dbg_buff[IPA_MAX_MSG_LEN];
 
 #if !defined(MSM_IPA_TESTS) && !defined(USE_GLIB) && !defined(FEATURE_IPA_ANDROID)
-size_t strlcpy(char* dst, const char* src, size_t size)
+size_t strscpy(char* dst, const char* src, size_t size)
 {
 	size_t i;
 

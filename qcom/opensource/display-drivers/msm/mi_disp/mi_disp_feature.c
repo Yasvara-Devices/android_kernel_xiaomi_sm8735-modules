@@ -355,7 +355,9 @@ static const struct file_operations disp_feature_fops = {
 #endif
 	.poll = mi_disp_poll,
 	.read = mi_disp_read,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0)
 	.llseek = no_llseek,
+#endif
 };
 
 int mi_disp_feature_init(void)

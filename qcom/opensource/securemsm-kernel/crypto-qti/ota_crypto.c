@@ -770,7 +770,7 @@ exit_unreg_chrdev_region:
 	return rc;
 }
 
-static int qcota_remove(struct platform_device *pdev)
+static void qcota_remove(struct platform_device *pdev)
 {
 	struct ota_dev_control *podev;
 	struct ota_qce_dev *pqce;
@@ -778,7 +778,7 @@ static int qcota_remove(struct platform_device *pdev)
 
 	pqce = platform_get_drvdata(pdev);
 	if (!pqce)
-		return 0;
+		return;
 	if (pqce->qce)
 		qce_close(pqce->qce);
 
@@ -803,7 +803,6 @@ ret:
 
 	tasklet_kill(&pqce->done_tasklet);
 	kfree(pqce);
-	return 0;
 }
 
 static const struct of_device_id qcota_match[] = {

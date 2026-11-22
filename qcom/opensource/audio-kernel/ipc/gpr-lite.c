@@ -345,10 +345,10 @@ static int gpr_callback(struct rpmsg_device *rpdev, void *buf,
 	return 0;
 }
 
-static int gpr_device_match(struct device *dev, struct device_driver *drv)
+static int gpr_device_match(struct device *dev, const struct device_driver *drv)
 {
 	struct gpr_device *adev = to_gpr_device(dev);
-	struct gpr_driver *adrv = to_gpr_driver(drv);
+	const struct gpr_driver *adrv = container_of(drv, const struct gpr_driver, driver);
 	const struct gpr_device_id *id = adrv->id_table;
 
 	/* Attempt an OF style match first */

@@ -12,6 +12,7 @@
 #include <linux/soc/qcom/altmode-glink.h>
 #include <linux/usb/dwc3-msm.h>
 #include <linux/usb/pd_vdo.h>
+#include <linux/usb/typec_dp.h>
 #include <linux/of_platform.h>
 
 #include "dp_altmode.h"
@@ -34,6 +35,9 @@ struct dp_altmode_private {
 	struct altmode_client *amclient;
 	bool connected;
 	u32 lanes;
+	u8 pin_assign;
+	u8 hpd_state;
+	u8 hpd_irq;
 };
 
 enum dp_altmode_pin_assignment {
@@ -75,7 +79,9 @@ static int dp_altmode_set_usb_dp_mode(struct dp_altmode_private *altmode)
 	}
 
 	while (timeout) {
-		rc = dwc3_msm_set_dp_mode(&usb_pdev->dev, altmode->connected, altmode->lanes);
+		rc = dwc3_msm_set_dp_mode(&usb_pdev->dev, altmode->connected, altmode->lanes,
+				altmode->dp_altmode.base.orientation, USB_TYPEC_DP_SID,
+				altmode->pin_assign, altmode->hpd_state, altmode->hpd_irq);
 		if (rc != -EBUSY && rc != -EAGAIN)
 			break;
 
@@ -132,6 +138,9 @@ static int dp_altmode_notify(void *priv, void *data, size_t len)
 	pin = dp_data & ALTMODE_CONFIGURE_MASK;
 	hpd_state = (dp_data & ALTMODE_HPD_STATE_MASK) >> 6;
 	hpd_irq = (dp_data & ALTMODE_HPD_IRQ_MASK) >> 7;
+	altmode->pin_assign = pin;
+	altmode->hpd_state = hpd_state;
+	altmode->hpd_irq = hpd_irq;
 
 	altmode->dp_altmode.base.hpd_high = !!hpd_state;
 	altmode->dp_altmode.base.hpd_irq = !!hpd_irq;

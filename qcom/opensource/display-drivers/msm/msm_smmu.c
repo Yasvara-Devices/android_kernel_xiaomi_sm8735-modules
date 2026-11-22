@@ -611,7 +611,7 @@ static int msm_smmu_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int msm_smmu_remove(struct platform_device *pdev)
+static void msm_smmu_remove(struct platform_device *pdev)
 {
 	struct msm_smmu_client *client;
 	struct msm_smmu_client *curr, *next;
@@ -628,7 +628,6 @@ static int msm_smmu_remove(struct platform_device *pdev)
 	}
 	mutex_unlock(&smmu_list_lock);
 
-	return 0;
 }
 
 static struct platform_driver msm_smmu_driver = {

@@ -1944,7 +1944,7 @@ err_reg:
 	return ret;
 }
 
-static int ep92_i2c_remove(struct i2c_client *client)
+static void ep92_i2c_remove(struct i2c_client *client)
 {
 	struct ep92_pdata *ep92;
 
@@ -1960,7 +1960,6 @@ static int ep92_i2c_remove(struct i2c_client *client)
 
 	ep92_sysfs_remove(client, ep92);
 
-	return 0;
 }
 
 static const struct i2c_device_id ep92_i2c_id[] = {

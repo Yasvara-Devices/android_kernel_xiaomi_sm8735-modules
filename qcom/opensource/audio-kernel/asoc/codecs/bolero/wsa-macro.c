@@ -3100,11 +3100,11 @@ static void wsa_macro_add_child_devices(struct work_struct *work)
 	for_each_available_child_of_node(wsa_priv->dev->of_node, node) {
 		if (strnstr(node->name, "wsa_swr_master",
 				strlen("wsa_swr_master")) != NULL)
-			strlcpy(plat_dev_name, "wsa_swr_ctrl",
+			strscpy(plat_dev_name, "wsa_swr_ctrl",
 				(WSA_MACRO_SWR_STRING_LEN - 1));
 		else if (strnstr(node->name, "msm_cdc_pinctrl",
 				 strlen("msm_cdc_pinctrl")) != NULL)
-			strlcpy(plat_dev_name, node->name,
+			strscpy(plat_dev_name, node->name,
 				(WSA_MACRO_SWR_STRING_LEN - 1));
 		else
 			continue;
@@ -3305,7 +3305,7 @@ reg_macro_fail:
 	return ret;
 }
 
-static int wsa_macro_remove(struct platform_device *pdev)
+static void wsa_macro_remove(struct platform_device *pdev)
 {
 	struct wsa_macro_priv *wsa_priv;
 	u16 count = 0;
@@ -3313,7 +3313,7 @@ static int wsa_macro_remove(struct platform_device *pdev)
 	wsa_priv = dev_get_drvdata(&pdev->dev);
 
 	if (!wsa_priv)
-		return -EINVAL;
+		return;
 
 	for (count = 0; count < wsa_priv->child_count &&
 		count < WSA_MACRO_CHILD_DEVICES_MAX; count++)
@@ -3324,7 +3324,6 @@ static int wsa_macro_remove(struct platform_device *pdev)
 	bolero_unregister_macro(&pdev->dev, WSA_MACRO);
 	mutex_destroy(&wsa_priv->mclk_lock);
 	mutex_destroy(&wsa_priv->swr_clk_lock);
-	return 0;
 }
 
 static const struct of_device_id wsa_macro_dt_match[] = {

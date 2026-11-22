@@ -1480,7 +1480,7 @@ err:
 	return ret;
 }
 
-static int msm_asoc_machine_remove(struct platform_device *pdev)
+static void msm_asoc_machine_remove(struct platform_device *pdev)
 {
 	struct snd_soc_card *card = platform_get_drvdata(pdev);
 	struct msm_asoc_mach_data *pdata = NULL;
@@ -1497,7 +1497,6 @@ static int msm_asoc_machine_remove(struct platform_device *pdev)
 	snd_soc_unregister_card(card);
 	msm_audio_remove_qos_request();
 
-	return 0;
 }
 
 static struct platform_driver lahaina_asoc_machine_driver = {

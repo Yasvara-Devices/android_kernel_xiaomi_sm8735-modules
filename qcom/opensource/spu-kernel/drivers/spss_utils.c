@@ -1284,7 +1284,7 @@ static int spss_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int spss_remove(struct platform_device *pdev)
+static void spss_remove(struct platform_device *pdev)
 {
 	spss_utils_destroy_chardev();
 	spss_destroy_sysfs(spss_dev);
@@ -1303,7 +1303,6 @@ static int spss_remove(struct platform_device *pdev)
 		cmac_mem = NULL;
 	}
 
-	return 0;
 }
 
 static const struct of_device_id spss_match_table[] = {

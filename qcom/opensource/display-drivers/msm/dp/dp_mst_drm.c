@@ -74,9 +74,14 @@ struct dp_drm_mst_fw_helper_ops {
 	int (*update_payload_part1)(struct drm_dp_mst_topology_mgr *mgr,
 			struct drm_dp_mst_topology_state *mst_state,
 			struct drm_dp_mst_atomic_payload *payload);
+#if (KERNEL_VERSION(6, 8, 0) <= LINUX_VERSION_CODE)
+	int (*update_payload_part2)(struct drm_dp_mst_topology_mgr *mgr,
+			struct drm_dp_mst_atomic_payload *payload);
+#else
 	int (*update_payload_part2)(struct drm_dp_mst_topology_mgr *mgr,
 			struct drm_atomic_state *state,
 			struct drm_dp_mst_atomic_payload *payload);
+#endif
 #if (KERNEL_VERSION(6, 7, 0) <= LINUX_VERSION_CODE)
 	void (*reset_vcpi_slots)(struct drm_dp_mst_topology_mgr *mgr,
 			struct drm_dp_mst_topology_state *mst_state,
@@ -770,7 +775,11 @@ static void _dp_mst_bridge_pre_enable_part2(struct dp_mst_bridge *dp_bridge)
 		return;
 	}
 
+#if (KERNEL_VERSION(6, 8, 0) <= LINUX_VERSION_CODE)
+	mst->mst_fw_cbs->update_payload_part2(&mst->mst_mgr, payload);
+#else
 	mst->mst_fw_cbs->update_payload_part2(&mst->mst_mgr, mst_state->base.state, payload);
+#endif
 #else
 	mst->mst_fw_cbs->update_payload_part2(&mst->mst_mgr);
 #endif

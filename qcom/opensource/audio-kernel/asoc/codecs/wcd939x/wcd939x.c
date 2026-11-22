@@ -5755,7 +5755,7 @@ err_static_supplies:
 	return ret;
 }
 
-static int wcd939x_remove(struct platform_device *pdev)
+static void wcd939x_remove(struct platform_device *pdev)
 {
 	struct wcd939x_priv *wcd939x = NULL;
 
@@ -5765,7 +5765,6 @@ static int wcd939x_remove(struct platform_device *pdev)
 	mutex_destroy(&wcd939x->wakeup_lock);
 	dev_set_drvdata(&pdev->dev, NULL);
 
-	return 0;
 }
 
 #ifdef CONFIG_PM_SLEEP

@@ -21,6 +21,7 @@
 #define __MSM_DRV_H__
 
 #include <linux/kernel.h>
+#include <linux/vmalloc.h>
 #include <linux/clk.h>
 #include <linux/cpufreq.h>
 #include <linux/module.h>

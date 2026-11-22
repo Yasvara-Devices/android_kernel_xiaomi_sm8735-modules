@@ -3503,10 +3503,10 @@ static void tx_macro_add_child_devices(struct work_struct *work)
 			tx_swr_master_node = true;
 
 		if (tx_swr_master_node)
-			strlcpy(plat_dev_name, "tx_swr_ctrl",
+			strscpy(plat_dev_name, "tx_swr_ctrl",
 				(TX_MACRO_SWR_STRING_LEN - 1));
 		else
-			strlcpy(plat_dev_name, node->name,
+			strscpy(plat_dev_name, node->name,
 				(TX_MACRO_SWR_STRING_LEN - 1));
 
 		pdev = platform_device_alloc(plat_dev_name, -1);
@@ -3743,7 +3743,7 @@ err_reg_macro:
 	return ret;
 }
 
-static int tx_macro_remove(struct platform_device *pdev)
+static void tx_macro_remove(struct platform_device *pdev)
 {
 	struct tx_macro_priv *tx_priv = NULL;
 	u16 count = 0;
@@ -3751,7 +3751,7 @@ static int tx_macro_remove(struct platform_device *pdev)
 	tx_priv = platform_get_drvdata(pdev);
 
 	if (!tx_priv)
-		return -EINVAL;
+		return;
 
 	if (tx_priv->is_used_tx_swr_gpio) {
 		if (tx_priv->swr_ctrl_data)
@@ -3768,7 +3768,6 @@ static int tx_macro_remove(struct platform_device *pdev)
 	if (tx_priv->is_used_tx_swr_gpio)
 		mutex_destroy(&tx_priv->swr_clk_lock);
 	bolero_unregister_macro(&pdev->dev, TX_MACRO);
-	return 0;
 }
 
 

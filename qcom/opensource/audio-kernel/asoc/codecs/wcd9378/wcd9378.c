@@ -4729,7 +4729,7 @@ err:
 	return ret;
 }
 
-static int wcd9378_remove(struct platform_device *pdev)
+static void wcd9378_remove(struct platform_device *pdev)
 {
 	struct wcd9378_priv *wcd9378 = NULL;
 
@@ -4740,7 +4740,6 @@ static int wcd9378_remove(struct platform_device *pdev)
 	mutex_destroy(&wcd9378->sys_usage_lock);
 	dev_set_drvdata(&pdev->dev, NULL);
 
-	return 0;
 }
 
 #ifdef CONFIG_PM_SLEEP

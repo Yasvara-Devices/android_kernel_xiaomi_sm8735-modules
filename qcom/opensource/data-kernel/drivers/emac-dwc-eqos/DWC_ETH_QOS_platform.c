@@ -129,7 +129,7 @@ static int __init set_early_ethernet_ipv4(char *ipv4_addr_in)
 	if (!ipv4_addr_in)
 		return ret;
 
-	strlcpy(pparams.ipv4_addr_str, ipv4_addr_in, sizeof(pparams.ipv4_addr_str));
+	strscpy(pparams.ipv4_addr_str, ipv4_addr_in, sizeof(pparams.ipv4_addr_str));
 	EMACDBG("Early ethernet IPv4 addr: %s\n", pparams.ipv4_addr_str);
 
 	ret = in4_pton(pparams.ipv4_addr_str, -1,
@@ -152,7 +152,7 @@ static int __init set_early_ethernet_ipv6(char* ipv6_addr_in)
 	if (!ipv6_addr_in)
 		return ret;
 
-	strlcpy(pparams.ipv6_addr_str, ipv6_addr_in, sizeof(pparams.ipv6_addr_str));
+	strscpy(pparams.ipv6_addr_str, ipv6_addr_in, sizeof(pparams.ipv6_addr_str));
 	EMACDBG("Early ethernet IPv6 addr: %s\n", pparams.ipv6_addr_str);
 
 	ret = in6_pton(pparams.ipv6_addr_str, -1,
@@ -176,7 +176,7 @@ static int __init set_early_ethernet_mac(char* mac_addr)
 	if(!mac_addr)
 		return ret;
 
-	strlcpy(temp_mac_addr, mac_addr, sizeof(temp_mac_addr));
+	strscpy(temp_mac_addr, mac_addr, sizeof(temp_mac_addr));
 	EMACDBG("Early ethernet MAC address assigned: %s\n", temp_mac_addr);
 	temp_mac_addr[DWC_ETH_QOS_MAC_ADDR_STR_LEN-1] = '\0';
 
@@ -1596,7 +1596,7 @@ int DWC_ETH_QOS_add_ipaddr(struct DWC_ETH_QOS_prv_data *pdata)
 	memset(&ir, 0, sizeof(ir));
 	memcpy(&sin->sin_addr.s_addr, &ip_info->ipv4_addr,
 		   sizeof(sin->sin_addr.s_addr));
-	strlcpy(ir.ifr_ifrn.ifrn_name, pdata->dev->name, sizeof(ir.ifr_ifrn.ifrn_name) + 1);
+	strscpy(ir.ifr_ifrn.ifrn_name, pdata->dev->name, sizeof(ir.ifr_ifrn.ifrn_name) + 1);
 	sin->sin_family = AF_INET;
 	sin->sin_port = 0;
 

@@ -739,7 +739,6 @@ ssize_t ipa3_read(struct file *filp, char __user *buf, size_t count,
 				break;
 			}
 			buf += sizeof(struct ipa_msg_meta);
-			count -= sizeof(struct ipa_msg_meta);
 			if (msg->buff) {
 				if (copy_to_user(buf, msg->buff,
 						  msg->meta.msg_len)) {
@@ -749,7 +748,6 @@ ssize_t ipa3_read(struct file *filp, char __user *buf, size_t count,
 					break;
 				}
 				buf += msg->meta.msg_len;
-				count -= msg->meta.msg_len;
 				msg->callback(msg->buff, msg->meta.msg_len,
 					       msg->meta.msg_type);
 			}

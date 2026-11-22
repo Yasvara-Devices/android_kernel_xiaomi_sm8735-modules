@@ -7,6 +7,7 @@
 #include <linux/miscdevice.h>
 #include <linux/poll.h>
 #include <linux/dma-mapping.h>
+#include <linux/version.h>
 
 #include "xiaomi_touch.h"
 #include "xiaomi_touch_type_common.h"
@@ -420,7 +421,9 @@ static const struct file_operations xiaomitouch_dev_fops = {
 	.unlocked_ioctl = xiaomi_touch_dev_ioctl,
 	.compat_ioctl = xiaomi_touch_dev_ioctl,
 	.release = xiaomi_touch_dev_release,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0)
 	.llseek = no_llseek,
+#endif
 };
 
 static struct miscdevice misc_dev = {

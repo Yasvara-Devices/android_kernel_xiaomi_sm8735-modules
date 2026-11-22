@@ -875,7 +875,7 @@ err_exit:
 	return rc;
 }
 
-static int msm_hw_fence_remove(struct platform_device *pdev)
+static void msm_hw_fence_remove(struct platform_device *pdev)
 {
 	struct hw_fence_soccp *soccp_props;
 
@@ -883,13 +883,13 @@ static int msm_hw_fence_remove(struct platform_device *pdev)
 
 	if (!pdev) {
 		HWFNC_ERR("null platform dev\n");
-		return -EINVAL;
+		return;
 	}
 
 	hw_fence_drv_data = dev_get_drvdata(&pdev->dev);
 	if (!hw_fence_drv_data) {
 		HWFNC_ERR("null driver data\n");
-		return -EINVAL;
+		return;
 	}
 	soccp_props = &hw_fence_drv_data->soccp_props;
 	if (soccp_props->ssr_notifier) {
@@ -918,7 +918,6 @@ static int msm_hw_fence_remove(struct platform_device *pdev)
 
 	HWFNC_DBG_H("-\n");
 
-	return 0;
 }
 
 static const struct of_device_id msm_hw_fence_dt_match[] = {

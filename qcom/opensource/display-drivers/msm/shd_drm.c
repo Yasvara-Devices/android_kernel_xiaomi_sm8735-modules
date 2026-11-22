@@ -1633,13 +1633,13 @@ error:
  * sde_shd_remove - unload shared display module
  * @pdev:	Pointer to platform device
  */
-static int sde_shd_remove(struct platform_device *pdev)
+static void sde_shd_remove(struct platform_device *pdev)
 {
 	struct shd_display *shd_dev;
 
 	shd_dev = platform_get_drvdata(pdev);
 	if (!shd_dev)
-		return 0;
+		return;
 
 	list_del_init(&shd_dev->head);
 	if (list_empty(&shd_dev->base->disp_list))
@@ -1647,7 +1647,6 @@ static int sde_shd_remove(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, NULL);
 
-	return 0;
 }
 
 static const struct of_device_id dt_match[] = {

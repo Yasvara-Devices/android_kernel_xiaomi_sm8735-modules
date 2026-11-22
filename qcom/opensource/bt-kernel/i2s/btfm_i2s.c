@@ -39,7 +39,7 @@ static int btfm_i2s_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int btfm_i2s_remove(struct platform_device *pdev)
+static void btfm_i2s_remove(struct platform_device *pdev)
 {
 	struct btfmi2s *btfmi2s = platform_get_drvdata(pdev);
 
@@ -49,7 +49,6 @@ static int btfm_i2s_remove(struct platform_device *pdev)
 		btfm_i2s_unregister_hwep();
 		pbtfmi2s = NULL;
 	}
-	return 0;
 }
 
 static const struct of_device_id btfm_i2s_of_match[] = {

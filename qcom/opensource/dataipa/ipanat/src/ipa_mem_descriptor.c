@@ -140,7 +140,7 @@ static int MapMemory(
 	IPADBG("In\n");
 
 	ipa_dev_dir_path_len =
-		strlcpy(device_full_path, IPA_DEV_DIR, IPA_RESOURCE_NAME_MAX);
+		strscpy(device_full_path, IPA_DEV_DIR, IPA_RESOURCE_NAME_MAX);
 
 	if (ipa_dev_dir_path_len >= IPA_RESOURCE_NAME_MAX)
 	{
@@ -150,7 +150,7 @@ static int MapMemory(
 		goto bail;
 	}
 
-	strlcpy(device_full_path + ipa_dev_dir_path_len,
+	strscpy(device_full_path + ipa_dev_dir_path_len,
 			desc->name, IPA_RESOURCE_NAME_MAX - ipa_dev_dir_path_len);
 
 	device_fd = open(device_full_path, O_RDWR);
@@ -287,7 +287,7 @@ void ipa_mem_descriptor_init(
 {
 	IPADBG("In\n");
 
-	strlcpy(desc->name, device_name, IPA_RESOURCE_NAME_MAX);
+	strscpy(desc->name, device_name, IPA_RESOURCE_NAME_MAX);
 
 	desc->orig_rqst_size      = desc->mmap_size = size;
 	desc->table_index         = table_index;

@@ -1091,7 +1091,7 @@ static int kgsl_shmem_alloc_pages(struct kgsl_memdesc *memdesc)
 }
 
 static void kgsl_shmem_fill_page(void *ptr,
-	struct shmem_inode_info *inode, struct folio **folio)
+	struct shmem_inode_info *inode, struct folio **folio, int order)
 {
 	struct kgsl_memdesc *memdesc = (struct kgsl_memdesc *)inode->android_vendor_data1;
 

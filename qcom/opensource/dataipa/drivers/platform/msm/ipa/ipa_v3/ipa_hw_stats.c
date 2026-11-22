@@ -7,6 +7,7 @@
 #include <linux/debugfs.h>
 #include <linux/kernel.h>
 #include <linux/delay.h>
+#include <linux/vmalloc.h>
 #include "ipa_i.h"
 #include "ipahal.h"
 #include "ipahal_hw_stats.h"

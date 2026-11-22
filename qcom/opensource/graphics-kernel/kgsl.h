@@ -11,6 +11,7 @@
 #include <linux/interrupt.h>
 #include <linux/kthread.h>
 #include <linux/mm.h>
+#include <linux/vmalloc.h>
 #include <uapi/linux/msm_kgsl.h>
 #include <linux/uaccess.h>
 #include <linux/version.h>
