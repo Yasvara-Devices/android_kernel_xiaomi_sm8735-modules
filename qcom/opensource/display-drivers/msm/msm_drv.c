@@ -1906,6 +1906,10 @@ static const struct drm_ioctl_desc msm_ioctls[] = {
 
 static const struct file_operations fops = {
 	.owner              = THIS_MODULE,
+	/* 6.12 drm_open_helper rejects the client unless this is set. */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)
+	.fop_flags          = FOP_UNSIGNED_OFFSET,
+#endif
 	.open               = drm_open,
 	.release            = msm_release,
 	.unlocked_ioctl     = drm_ioctl,
