@@ -31484,7 +31484,7 @@ static int __wlan_hdd_cfg80211_set_mon_ch(struct wiphy *wiphy,
 	return 0;
 }
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 117))
 /*
  * wlan_hdd_cfg80211_set_mon_ch() - Set monitor mode capture channel
  * @wiphy: Handle to struct wiphy to get handle to module context.
