@@ -1892,6 +1892,8 @@ void sde_connector_helper_bridge_enable(struct drm_connector *connector)
 	if (!display)
 		return;
 
+	bool initial_bl_handoff = !c_conn->initial_bl_restored;
+
 	/*
 	 * Special handling for some panels which need atleast
 	 * one frame to be transferred to GRAM before enabling backlight.
@@ -1906,14 +1908,28 @@ void sde_connector_helper_bridge_enable(struct drm_connector *connector)
 	}
 
 	c_conn->allow_bl_update = true;
+	c_conn->initial_bl_restored = true;
 
 	if (!sde_in_trusted_vm(sde_kms) && c_conn->bl_device && !display->poms_pending) {
-		if (display->panel->cur_mode->dsi_mode_flags & DSI_MODE_FLAG_DMS) {
+		if (!initial_bl_handoff &&
+		    (display->panel->cur_mode->dsi_mode_flags & DSI_MODE_FLAG_DMS)) {
 			DISP_DEBUG("dynamic mode switch, skip backlight update\n");
 		} else {
+			if (initial_bl_handoff &&
+			    c_conn->bl_device->props.brightness == 0 &&
+			    display->panel->bl_config.brightness_init_level > 0) {
+				c_conn->bl_device->props.brightness =
+					display->panel->bl_config.brightness_init_level;
+			}
 			c_conn->bl_device->props.power = FB_BLANK_UNBLANK;
 			c_conn->bl_device->props.state &= ~BL_CORE_FBBLANK;
 			backlight_update_status(c_conn->bl_device);
+			if (initial_bl_handoff &&
+			    c_conn->bl_device->props.brightness > 0 &&
+			    atomic_read(&display->panel->mi_cfg.brightness_clone) == 0) {
+				mi_dsi_panel_set_brightness_clone(display->panel,
+					c_conn->bl_device->props.brightness);
+			}
 		}
 	}
 

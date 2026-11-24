@@ -750,6 +750,7 @@ struct sde_connector {
 	u32 bl_scale_sv;
 	u32 unset_bl_level;
 	bool allow_bl_update;
+	bool initial_bl_restored;
 	bool dimming_bl_notify_enabled;
 	struct sde_backlight_vrr_update bl_vrr;
 
